@@ -461,7 +461,7 @@ requirements.
 
 We evaluate PhysicsLM on the PhysicsScenes validation split (100,020 scenes,
 30 scenario types). The OOD subset (6 held-out types, 20,004 scenes) is reported
-separately. We assess two complementary aspects:
+separately. We assess three complementary aspects:
 
 \paragraph{Single-step prediction.}
 Given four ground-truth context frames, predict the next frame. Error is computed
@@ -475,6 +475,11 @@ training. We further divide OOD scenarios into \emph{near-distribution OOD}
 (types sharing physical primitives with seen scenarios) and \emph{novel OOD}
 (types requiring qualitatively new interaction patterns), as they exhibit very
 different error profiles.
+
+\paragraph{Multi-step rollout.}
+We run the model autoregressively for 30 steps on 3 scenes per scenario,
+feeding each predicted frame back as context. This measures error accumulation
+and rollout stability; results appear in Appendix~\ref{app:rollout}.
 
 \subsection{Metrics}
 
@@ -679,9 +684,11 @@ is further improved.
 
 \paragraph{Energy Non-Conservation.}
 Unlike Hamiltonian Neural Networks~\citep{gregorova2019learned}, PhysicsLM does not
-enforce energy conservation. Over long rollouts, we observe a slow drift toward
-energy decrease (inelastic rounding in velocity predictions). Regularizing the
-model toward energy-conserving predictions is an open problem for LM-based physics.
+enforce energy conservation. Autoregressive rollout on zero-gravity billiards (Appendix~\ref{app:conservation})
+shows immediate 77--80\% momentum and KE drift from the first predicted frame, confirming the model has
+no implicit conservation law for out-of-distribution gravitational conditions.
+Incorporating symmetry-aware architectures or conservation-law regularization is a clear
+future direction.
 
 \paragraph{Dataset Coverage.}
 While 30 scenario types and 1M scenes is the largest text-format physics dataset
@@ -905,6 +912,47 @@ alignment on structured dynamics (pendulum arc, tower stack). Novel OOD scenario
 \label{fig:comparison_gallery}
 \end{figure*}
 
+\section{Multi-Step Rollout Evaluation}
+\label{app:rollout}
+
+We evaluate PhysicsLM autoregressively by feeding each predicted frame back as
+context for the next step. Starting from four ground-truth seed frames, we run
+30 steps on 3 scenes each for four representative scenarios: two seen
+(Billiards, Tower) and two OOD (Pendulum, Pong-novel). Mean RMSE(t) curves are
+shown in Figure~\ref{fig:rollout}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/rollout_mse_curve.pdf}
+\caption{Mean RMSE (px) over 30 autoregressive rollout steps for four scenarios.
+Billiards (Collision category, seen) degrades slowly to 4.8\,px RMSE at step~30.
+Tower (Stacking, seen) diverges more rapidly (87\,px at step~30) as stacking errors
+compound. Pendulum (Constraint, seen) diverges quickly due to arc-phase sensitivity
+(318\,px at step~30). Pong (OOD-novel) diverges catastrophically (435\,px at step~30)
+as the model has no training exposure to the ball-paddle interaction pattern.
+Note the log-scale $y$-axis.}
+\label{fig:rollout}
+\end{figure}
+
+\noindent These results confirm that multi-step stability is scenario-dependent:
+free-flight-dominated scenes (billiards) degrade slowly, while constraint-heavy or
+OOD scenes diverge rapidly. Single-step teacher-forced results (Table~\ref{tab:category})
+underestimate rollout error for high-divergence scenarios.
+
+\section{Collision-Frame vs.\ Free-Flight Decomposition}
+\label{app:collisiondecomp}
+
+To understand where PhysicsLM's error originates, we classify each frame transition
+as a \emph{collision frame} (any object's velocity changes by $>$10\,px/s) or
+\emph{free-flight frame}. Linear extrapolation is near-exact on free-flight frames
+($\approx0.0001$\,px$^2$ MSE) but fails on collision frames, confirming the
+decomposition is informative. Across categories: Collision scenarios have
+49--100\% collision frames; Stacking scenarios 43--100\%; Ramp 26--87\%;
+Constraint 7--99\%; Minigame 1--99\%. PhysicsLM's advantage over the copy-last
+baseline arises primarily from its ability to partially anticipate collision outcomes
+from the 4-frame context window, not from free-flight improvement (where linear
+extrapolation is already near-oracle).
+
 \section{Conservation Analysis}
 \label{app:conservation}
 
@@ -929,14 +977,31 @@ must reproduce this dissipation, not conserve energy.}
 \end{figure}
 
 \paragraph{Model conservation.}
-Measuring conservation in PhysicsLM's rollout predictions requires
-autoregressive multi-step inference, which we defer to future work.
-We note that single-step teacher-forced evaluation (Section~\ref{sec:main-results})
-measures only local prediction error; rollout stability and energy drift
-are open evaluation dimensions. Prior work on neural simulators reports
-energy drift of 1--5\% per step for GNS-style models; we expect PhysicsLM's
-drift to be higher for high-velocity scenarios given its lack of explicit
-conservation constraints.
+We evaluate conservation directly by running PhysicsLM autoregressively for 30
+steps on 5 zero-gravity billiards scenes (gravity disabled, frictionless walls),
+where a physically ideal surrogate should conserve both momentum and kinetic energy
+exactly. Figure~\ref{fig:conservation} shows the mean drift relative to the
+initial state. Both momentum and kinetic energy collapse immediately: momentum
+drift reaches $\approx$77\% at step~1 and remains flat, and KE drift reaches
+$\approx$80\% at step~1 and remains flat. This indicates that the model has not
+learned zero-gravity dynamics: trained exclusively on scenes with downward gravity
+and inelastic collisions, it continues to predict energy dissipation and deceleration
+even in frictionless zero-gravity conditions. This is an expected failure mode for
+a data-driven surrogate lacking explicit physical priors; incorporating inductive
+biases such as conservation-law regularization or symmetry-aware architectures is a
+promising direction for future work.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/conservation_drift.pdf}
+\caption{Momentum drift (left) and kinetic energy drift (right) over 30 autoregressive
+rollout steps on zero-gravity frictionless billiards (5 scenes, mean $\pm$ std).
+Both quantities collapse to $\approx$77--80\% drift from the very first predicted
+frame, indicating that PhysicsLM does not generalize to out-of-distribution
+zero-gravity dynamics and continues to predict the energy dissipation patterns
+learned from training data.}
+\label{fig:conservation}
+\end{figure}
 
 \section{Single-Step Error Distribution Across Trajectory}
 \label{app:errorbyframe}
@@ -970,15 +1035,15 @@ systematic stress tests along five physical dimensions:
 Each axis varies a single physical parameter beyond the training range.
 Results on these axes are deferred to future work.}
 \small
-\begin{tabular}{llll}
+\begin{tabular}{p{2.1cm}p{2.2cm}p{2.2cm}p{3.5cm}}
 \toprule
 \textbf{Dimension} & \textbf{Train range} & \textbf{OOD range} & \textbf{Physical effect} \\
 \midrule
 Object count    & 2--15      & 1--9 or 51--100  & Sparse/dense interactions \\
 Mass ratio      & 0.5--10\,kg & $>$50\,kg or $<$0.1\,kg & Extreme momentum transfer \\
 Friction        & 0.1--1.0   & $>$2.0           & Near-frictionless or sticky \\
-Elasticity      & 0.1--0.95  & $>$0.98 (superelastic) & Persistent bouncing \\
-Gravity         & $-$981\,px/s$^2$ & 0, $-$163 (Moon), $-$2450 (Jupiter) & Trajectory curvature \\
+Elasticity      & 0.1--0.95  & $>$0.98 & Persistent bouncing \\
+Gravity         & $-$981\,px/s$^2$ & 0, $-$163, $-$2450 & Trajectory curvature \\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -1,0 +1,239 @@
+{
+  "per_scenario": {
+    "angry_birds": {
+      "col_frac": 0.8290398126463701,
+      "col_lin_mse": 0.0036085560885287414,
+      "flight_lin_mse": 0.00038320560436404494,
+      "plm_total_mse": 530.2103594578125,
+      "plm_col_mse_est": 639.5474449561492
+    },
+    "avalanche": {
+      "col_frac": 0.9964442879774688,
+      "col_lin_mse": 0.21938878024698355,
+      "flight_lin_mse": 0.3247346581770861,
+      "plm_total_mse": 2193.803674239545,
+      "plm_col_mse_est": 2201.630884983529
+    },
+    "basketball": {
+      "col_frac": 0.7175935288169869,
+      "col_lin_mse": 0.004232394015647849,
+      "flight_lin_mse": 5.777219360902461e-05,
+      "plm_total_mse": 67.49583750598484,
+      "plm_col_mse_est": 94.0585700403626
+    },
+    "billiards": {
+      "col_frac": 0.11398488789793138,
+      "col_lin_mse": 0.002274827013419707,
+      "flight_lin_mse": 0.00019082943867483493,
+      "plm_total_mse": 0.5588339227291629,
+      "plm_col_mse_est": 4.901218532257746
+    },
+    "bowling": {
+      "col_frac": 0.8446186742694227,
+      "col_lin_mse": 0.013230463893537298,
+      "flight_lin_mse": 0.003123596181504792,
+      "plm_total_mse": 1.5144912577272653,
+      "plm_col_mse_est": 1.7925318908217596
+    },
+    "breakout": {
+      "col_frac": 0.9917914486740033,
+      "col_lin_mse": 0.06670612028907286,
+      "flight_lin_mse": 0.010393260934529889,
+      "plm_total_mse": 0.6735036346874916,
+      "plm_col_mse_est": 0.6789918606094125
+    },
+    "bridge": {
+      "col_frac": 0.4851219959640433,
+      "col_lin_mse": 0.010999472066935875,
+      "flight_lin_mse": 0.00044755769195140845,
+      "plm_total_mse": 0.04132890884848456,
+      "plm_col_mse_est": 0.0847178061998406
+    },
+    "chain": {
+      "col_frac": 1.0,
+      "col_lin_mse": 3.175263450801375e-09,
+      "flight_lin_mse": 0.0,
+      "plm_total_mse": 0.4323942346666461,
+      "plm_col_mse_est": 0.4323942346666461
+    },
+    "conveyor": {
+      "col_frac": 0.4806763285024155,
+      "col_lin_mse": 0.0017657588138702627,
+      "flight_lin_mse": 4.87385196416899e-05,
+      "plm_total_mse": 0.8839814021875049,
+      "plm_col_mse_est": 1.8389840287633368
+    },
+    "dominos": {
+      "col_frac": 0.49770992366412214,
+      "col_lin_mse": 0.0005425419491359216,
+      "flight_lin_mse": 0.000324660229268809,
+      "plm_total_mse": 0.11903193272727366,
+      "plm_col_mse_est": 0.23883160343845034
+    },
+    "explosion": {
+      "col_frac": 0.9929535232383808,
+      "col_lin_mse": 0.033133083732411646,
+      "flight_lin_mse": 0.00027176188830372303,
+      "plm_total_mse": 21.500753027687526,
+      "plm_col_mse_est": 21.653330805053155
+    },
+    "head_on": {
+      "col_frac": 0.9709807886754297,
+      "col_lin_mse": 0.028300555811333526,
+      "flight_lin_mse": 0.0005452981251717983,
+      "plm_total_mse": 87.78642814892848,
+      "plm_col_mse_est": 90.4100403928294
+    },
+    "hourglass": {
+      "col_frac": 0.9835677749360614,
+      "col_lin_mse": 0.007450587906036091,
+      "flight_lin_mse": 0.0002477122468313254,
+      "plm_total_mse": 596.3377909096876,
+      "plm_col_mse_est": 606.3006556696006
+    },
+    "jenga": {
+      "col_frac": 0.42537224538415724,
+      "col_lin_mse": 0.02406782886512602,
+      "flight_lin_mse": 0.016001946159912465,
+      "plm_total_mse": 0.08561107227272742,
+      "plm_col_mse_est": 0.1796447951425732
+    },
+    "marble_run": {
+      "col_frac": 0.26188068756319516,
+      "col_lin_mse": 0.013566905776081013,
+      "flight_lin_mse": 0.0005567045914570218,
+      "plm_total_mse": 6.356262018333277,
+      "plm_col_mse_est": 24.270026030038018
+    },
+    "newtons_cradle": {
+      "col_frac": 0.38804347826086955,
+      "col_lin_mse": 0.0014005537753487003,
+      "flight_lin_mse": 0.00016684177567481026,
+      "plm_total_mse": 0.024313711666666498,
+      "plm_col_mse_est": 0.06239406950596152
+    },
+    "orbit": {
+      "col_frac": 0.0741512805241215,
+      "col_lin_mse": 0.0002772942104138674,
+      "flight_lin_mse": 0.0003136335612228775,
+      "plm_total_mse": 1.7202308619999869,
+      "plm_col_mse_est": 23.195020674112907
+    },
+    "pendulum": {
+      "col_frac": 0.9489679402722881,
+      "col_lin_mse": 0.0009719930043947281,
+      "flight_lin_mse": 0.00013493025660733893,
+      "plm_total_mse": 3.222329012333324,
+      "plm_col_mse_est": 3.3956069428855797
+    },
+    "pinball": {
+      "col_frac": 0.9292753623188406,
+      "col_lin_mse": 0.005728184430803333,
+      "flight_lin_mse": 1.2880351229508724e-05,
+      "plm_total_mse": 5910.216638649714,
+      "plm_col_mse_est": 6360.027261446883
+    },
+    "plinko": {
+      "col_frac": 0.9903943377148635,
+      "col_lin_mse": 0.0062990966077139795,
+      "flight_lin_mse": 0.0003003495614619831,
+      "plm_total_mse": 132.09629415773813,
+      "plm_col_mse_est": 133.37747020794504
+    },
+    "pong": {
+      "col_frac": 0.011330698287220026,
+      "col_lin_mse": 0.005759323938855711,
+      "flight_lin_mse": 0.0007722826861751412,
+      "plm_total_mse": 724.5055722092052,
+      "plm_col_mse_est": 63941.761603006875
+    },
+    "projectile": {
+      "col_frac": 0.8838220424671385,
+      "col_lin_mse": 0.005656604105695516,
+      "flight_lin_mse": 0.00025057663168777324,
+      "plm_total_mse": 47.924857230666646,
+      "plm_col_mse_est": 54.2245223771586
+    },
+    "pyramid": {
+      "col_frac": 0.03351643236197747,
+      "col_lin_mse": 0.012267073727262419,
+      "flight_lin_mse": 0.0006372411968974827,
+      "plm_total_mse": 0.21454880066666732,
+      "plm_col_mse_est": 6.3829262974880026
+    },
+    "ramp_roll": {
+      "col_frac": 0.7225637181409296,
+      "col_lin_mse": 0.01660957806965799,
+      "flight_lin_mse": 0.0028592529040318846,
+      "plm_total_mse": 2.0812395524999725,
+      "plm_col_mse_est": 2.879256513678993
+    },
+    "seesaw": {
+      "col_frac": 0.8850624192854069,
+      "col_lin_mse": 0.003384313394622789,
+      "flight_lin_mse": 0.0014672809340470203,
+      "plm_total_mse": 0.7488388930000035,
+      "plm_col_mse_est": 0.8458954204424209
+    },
+    "ski_jump": {
+      "col_frac": 0.8539939332659252,
+      "col_lin_mse": 0.016899198785614796,
+      "flight_lin_mse": 0.00319141223316598,
+      "plm_total_mse": 46.748570812333156,
+      "plm_col_mse_est": 54.740558481495405
+    },
+    "tower": {
+      "col_frac": 0.5876254180602006,
+      "col_lin_mse": 0.005964275195650497,
+      "flight_lin_mse": 0.000932366231639814,
+      "plm_total_mse": 0.5757748290625001,
+      "plm_col_mse_est": 0.9791787884651472
+    },
+    "wind": {
+      "col_frac": 0.9928357683506425,
+      "col_lin_mse": 0.026151671149863883,
+      "flight_lin_mse": 0.0004900584822413103,
+      "plm_total_mse": 1.2740325976190374,
+      "plm_col_mse_est": 1.2832223891802785
+    },
+    "wrecking_ball": {
+      "col_frac": 1.0,
+      "col_lin_mse": 0.02049415856263543,
+      "flight_lin_mse": 0.0,
+      "plm_total_mse": 0.6259036814374982,
+      "plm_col_mse_est": 0.6259036814374982
+    }
+  },
+  "per_category": {
+    "Collision": {
+      "col_frac": 0.7612719833096607,
+      "col_lin_mse": 0.01651910691127954,
+      "flight_lin_mse": 0.0008764124530685842
+    },
+    "Stacking": {
+      "col_frac": 0.4058692030869001,
+      "col_lin_mse": 0.010768238360822146,
+      "flight_lin_mse": 0.003668754301933996
+    },
+    "Ramp": {
+      "col_frac": 0.7650553929324764,
+      "col_lin_mse": 0.05455271189721027,
+      "flight_lin_mse": 0.06632847549344059
+    },
+    "Constraint": {
+      "col_frac": 0.7816363280163633,
+      "col_lin_mse": 0.005025552469466054,
+      "flight_lin_mse": 0.00038316895037544737
+    },
+    "Minigame": {
+      "col_frac": 0.6388455545262537,
+      "col_lin_mse": 0.020923053641462113,
+      "flight_lin_mse": 0.0023524225632394107
+    },
+    "Complex": {
+      "col_frac": 0.7824816070405354,
+      "col_lin_mse": 0.004546970550179216,
+      "flight_lin_mse": 0.00020265999452492232
+    }
+  }
+}
