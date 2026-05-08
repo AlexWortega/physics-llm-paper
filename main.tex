@@ -69,10 +69,12 @@ largest text-format 2D physics dataset to date, comprising 900K training scenes
 across 24 scenario types drawn from six physical categories (collisions,
 stacking, ramps, constraints, minigames, and complex compound scenes), plus a
 held-out out-of-distribution (OOD) split of six unseen scenario types.
-On single-step prediction, our fine-tuned model achieves a mean position error
-of \textbf{22.64 px} on an 800$\times$600 canvas ($\approx$3\% of the diagonal),
-with a 100\% structured output parse rate across all 37 test objects.
-Multi-step rollouts remain stable for 50+ consecutive frames.
+On single-step prediction, our fine-tuned model achieves a position RMSE of
+\textbf{18.85\,px} (MSE 355\,px$^2$) on seen scenario types and
+\textbf{17.58\,px} on held-out OOD types, with a \textbf{0.0\% parse failure
+rate} across all 30 scenario types. Performance spans five orders of magnitude
+across categories: near-perfect on stacking and constraint scenes (RMSE $<$ 1.5\,px)
+and more challenging on high-entropy minigame and complex scenarios.
 We additionally demonstrate first-of-its-kind in-browser LM physics simulation
 via ONNX/WebGPU export, eliminating the need for server-side inference.
 \end{abstract}
@@ -497,190 +499,119 @@ We compare against four baselines:
 \end{enumerate}
 
 \subsection{Main Results}
+\label{sec:main-results}
 
-Table~\ref{tab:main_results} reports single-step prediction results on the
-full validation set. PhysicsLM achieves a mean position error of 22.64 px,
-corresponding to $\approx$2.3\% of the scene diagonal. This represents a
-$5.0\times$ improvement over linear extrapolation and competitive performance
-with the dedicated GNS baseline.
+Table~\ref{tab:category} reports per-category position MSE on the PhysicsScenes
+validation set. The parse failure rate is \textbf{0.0\%} across all 30 scenario
+types, including all 6 OOD types---the fine-tuned model always produces
+well-formed structured output. In contrast, the LFM2-350M base model (without
+fine-tuning) generates narrative text instead of structured predictions and
+achieves 0\% parse rate; the GPT-11M model trained from scratch partially learns
+the output format but produces numerically divergent predictions with velocities
+growing out of bounds, rendering its MSE incomparable.
 
 \begin{table}[t]
 \centering
-\caption{Single-step prediction results on PhysicsScenes validation set.
-MPE = mean position error (px), MSE = mean squared error (px$^2$),
-Parse = percentage of objects successfully parsed.}
-\label{tab:main_results}
+\caption{Single-step position MSE (px$^2$) and RMSE (px) per category on
+the full validation set (100,020 scenes). Parse fail rate is 0.0\% for all
+categories. ``Seen'' categories appear in training; OOD rows are from
+held-out scenario types.}
+\label{tab:category}
 \small
-\begin{tabular}{lccc}
+\begin{tabular}{lrrr}
 \toprule
-\textbf{Model} & \textbf{MPE $\downarrow$} & \textbf{MSE $\downarrow$} & \textbf{Parse} \\
+\textbf{Category} & \textbf{Pos MSE $\downarrow$} & \textbf{RMSE $\downarrow$} & \textbf{Loss} \\
 \midrule
-LFM2-350M (no FT)         & ---         & ---          & 0.0\%  \\
-GPT-11M from scratch      & 187.3       & 68{,}421     & 43.2\% \\
-Linear extrapolation      & 113.2       & 28{,}516     & 100\%  \\
-GNS~\citep{sanchez2020learning} & 19.1  & 1{,}847      & 100\%  \\
+Stacking    &        0.21 &  0.46 & 0.518 \\
+Constraint  &        1.01 &  1.01 & 0.572 \\
+Collision   &       26.66 &  5.16 & 0.688 \\
+Ramp        &       37.55 &  6.13 & 0.674 \\
+Complex     &      558.80 & 23.64 & 0.844 \\
+Minigame    &    1{,}808.11 & 42.52 & 0.976 \\
 \midrule
-\textbf{PhysicsLM (ours)} & \textbf{22.64} & \textbf{2{,}479} & \textbf{100\%} \\
+\textbf{Overall (seen)} & \textbf{355.23} & \textbf{18.85} & \textbf{0.660} \\
+\textbf{Overall (OOD)}  & \textbf{309.11} & \textbf{17.58} & \textbf{0.872} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{LFM2 base (no fine-tuning).}
-Without fine-tuning, the base LFM2 model generates generic text completions
-in response to physics prompts—narrative descriptions of motion rather than
-structured numeric predictions. The output parse rate is 0\%, making
-quantitative error computation impossible.
-
-\paragraph{GPT-11M from scratch.}
-The small GPT trained from scratch with the digit-level tokenizer partially
-learns the output format (43.2\% parse rate) but diverges numerically: predicted
-positions frequently drift out of the canvas boundaries and velocities grow
-unbounded. The digit-level tokenizer successfully constrains the output
-vocabulary to numeric characters, but with only 11M parameters the model lacks
-sufficient capacity to capture multi-object collision dynamics. MSE is two orders
-of magnitude higher than PhysicsLM.
-
-\paragraph{Linear extrapolation.}
-The velocity-integration baseline achieves 100\% parse rate (by construction) and
-reasonable error on free-flight trajectories. However, it fails completely on all
-collision frames: a head-on elastic collision produces errors of $>$500 px
-because the baseline predicts continued motion in the pre-collision direction.
-When averaged across the full dataset, 35\% of frames involve a collision event,
-driving the mean MPE to 113.2 px.
-
-\paragraph{PhysicsLM.}
-Our model achieves 22.64 px MPE with 100\% parse rate. The model has learned both
-free-flight ballistics and collision response from the training data. It
-outperforms linear extrapolation by $5\times$ and is within 19\% of the
-specialized GNS baseline, which has an explicit graph inductive bias designed
-for particle physics. The MSE of 2,479 px$^2$ is substantially higher than the
-GNS value (1,847 px$^2$) because PhysicsLM produces collision-frame outliers
-with large errors (MSE max = 7,869 px$^2$), while GNS handles these more reliably
-through its neighborhood connectivity structure.
-
-\subsection{Multi-Step Rollout}
-
-Figure~\ref{fig:rollout} (see main paper; placeholder) shows MPE as a function
-of rollout step for PhysicsLM and baselines. Table~\ref{tab:rollout} reports
-numerical values at key checkpoints.
-
-\begin{table}[t]
-\centering
-\caption{Multi-step rollout MPE (px) by step count.
-``---'' indicates model failed to produce parseable output consistently.}
-\label{tab:rollout}
-\small
-\begin{tabular}{lrrrrr}
-\toprule
-\textbf{Model} & \textbf{10} & \textbf{25} & \textbf{50} & \textbf{100} & \textbf{150} \\
-\midrule
-Linear extrap. & 89.4  & 134.8 & 198.2 & 271.5 & 323.1 \\
-GNS            & 24.8  & 41.3  & 67.9  & 112.4 & 148.7 \\
-PhysicsLM      & 31.2  & 52.6  & 88.4  & 151.8 & ---   \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-PhysicsLM rollouts remain stable and parseable for all 50 steps in 100\% of
-tested scenes and for 100 steps in 89\% of scenes. Beyond 100 steps, without
-context trimming, some scenes ($\approx$11\%) exhibit repetitive token patterns
-where the model echoes a previous frame—a known degeneration mode of autoregressive
-models on long contexts. With the sliding-window context trimming described in
-Section~\ref{sec:method}, the model remains stable for 150 steps in 94\% of scenes.
-Error at step 150 was not consistently measurable across the full test set due to
-these remaining failures, hence the ``---'' entry.
-
-The error growth rate ($\approx 1.7\times$ per 50 steps) is slower than linear
-extrapolation ($2.0\times$) and faster than GNS ($1.5\times$), consistent with
-GNS's superior inductive bias for physical consistency.
+Performance varies strongly across categories, revealing a clear
+difficulty hierarchy. \emph{Stacking} and \emph{constraint} scenarios achieve
+near-perfect predictions (RMSE $<$ 1.5\,px): in these scenes most objects are
+static or follow periodic trajectories with small velocity magnitudes, so the
+model essentially learns to copy the previous state with minor corrections.
+\emph{Collision} and \emph{ramp} scenarios are harder (RMSE 5--6\,px) because
+they involve abrupt velocity changes at impact frames. \emph{Complex} and
+\emph{minigame} scenarios are the most challenging: they combine multiple
+physics phenomena simultaneously (e.g., simultaneous chains of collisions in
+\texttt{pinball}, MSE = 5{,}910\,px$^2$; gravity-driven granular flow in
+\texttt{avalanche}, MSE = 2{,}194\,px$^2$). The distribution of per-scenario
+errors is highly skewed: the median scenario MSE is 1.72\,px$^2$, while the
+mean is 355\,px$^2$, driven by these high-chaos outliers.
 
 \subsection{OOD Generalization}
 
-Table~\ref{tab:ood} reports single-step MPE on the six held-out scenario types.
+Table~\ref{tab:ood} breaks down performance on the six held-out scenario types.
+The model generalizes remarkably well to OOD types that share physical primitives
+with seen scenarios. Notably, \texttt{newtons\_cradle} (OOD, constraint category)
+achieves MSE = 0.02\,px$^2$---\emph{better} than any seen scenario---because the
+model has learned elastic chain-collision patterns from seen constraint scenarios
+(\texttt{chain}, \texttt{pendulum}). Similarly, \texttt{bowling} and
+\texttt{ramp\_roll} fall comfortably within the seen-scenario error range.
 
 \begin{table}[t]
 \centering
-\caption{OOD single-step MPE (px) by held-out scenario type.
-``Simple OOD'' types share kinematics with seen types;
-``Complex OOD'' types combine multiple phenomena.}
+\caption{OOD single-step results by held-out scenario type (real measurements).
+``Simple OOD'' types share physical primitives with seen scenarios;
+``Complex OOD'' types combine multiple unseen interaction patterns.}
 \label{tab:ood}
 \small
-\begin{tabular}{llcc}
+\begin{tabular}{llrr}
 \toprule
-\textbf{Type} & \textbf{Category} & \textbf{PhysicsLM} & \textbf{GNS} \\
+\textbf{Scenario} & \textbf{Type} & \textbf{MSE $\downarrow$} & \textbf{RMSE $\downarrow$} \\
 \midrule
-bowling       & Simple OOD   & 28.4  & 22.1 \\
-ramp\_roll    & Simple OOD   & 24.7  & 20.3 \\
-pong          & Simple OOD   & 31.2  & 24.9 \\
+newtons\_cradle &  Constraint OOD &     0.02 &   0.14 \\
+bowling         &  Collision OOD  &     1.51 &   1.23 \\
+ramp\_roll      &  Ramp OOD       &     2.08 &   1.44 \\
 \midrule
-angry\_birds  & Complex OOD  & 47.8  & 38.2 \\
-hourglass     & Complex OOD  & 61.3  & 43.1 \\
-newtons\_cradle & Complex OOD & 53.4 & 35.6 \\
+angry\_birds    &  Complex OOD    &   530.21 &  23.03 \\
+hourglass       &  Complex OOD    &   596.34 &  24.42 \\
+pong            &  Minigame OOD   &   724.51 &  26.92 \\
 \midrule
-Simple OOD avg & & 28.1 & 22.4 \\
-Complex OOD avg & & 54.2 & 39.0 \\
+Simple OOD avg  &                 &     1.20 &   0.94 \\
+Complex OOD avg &                 &   616.69 &  24.79 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-On simple OOD types, PhysicsLM achieves 28.1 px MPE—only 24\% higher than its
-in-distribution performance of 22.6 px. The model generalizes well to novel
-configurations of familiar physical interactions (rolling, bouncing, sliding).
-On complex OOD types, performance degrades more substantially (54.2 px, 2.4$\times$
-in-distribution error), which we attribute to the multi-stage causal chains in
-these scenarios (e.g., hourglass grain collisions, Newton's cradle momentum
-wave propagation) that require physical reasoning not captured by interpolation
-from seen scenario types.
+Complex OOD failure modes are instructive. \texttt{pong} (MSE = 724\,px$^2$)
+requires predicting ball reversal at paddle contact, a pattern not present in any
+seen scenario. \texttt{hourglass} (MSE = 596\,px$^2$) involves dense granular
+flow through a narrow neck---many simultaneous micro-collisions that the model
+has not encountered. \texttt{angry\_birds} (MSE = 530\,px$^2$) presents multi-stage
+destruction chains (projectile $\to$ block stack collapse) where error at the
+initial impact cascades across all downstream blocks. Despite these failures,
+the parse rate remains 100\% even on complex OOD types, confirming that output
+format generalization is robust even when physics reasoning is not.
 
-\subsection{Ablation Studies}
+The \emph{generalization gap} in cross-entropy loss (seen: 0.660, OOD: 0.872,
+gap = 0.212) is moderate: the model is penalized for incorrect numeric predictions
+on OOD scenarios, but the gap is smaller than the within-distribution variance
+across categories (stacking loss 0.518 vs.\ minigame loss 0.976).
 
-\paragraph{Curriculum vs.\ random order.}
-Table~\ref{tab:ablation_curriculum} compares models trained with the 5-stage
-curriculum against models trained on randomly shuffled data (same total steps).
-Curriculum training reduces validation MPE by 18\% and improves OOD MPE by 27\%,
-consistent with the finding that easy-to-hard ordering provides better optimization
-gradients for rare high-difficulty events.
+\subsection{Per-Scenario Breakdown}
 
-\begin{table}[t]
-\centering
-\caption{Ablation: curriculum order vs.\ random shuffle training.}
-\label{tab:ablation_curriculum}
-\small
-\begin{tabular}{lcc}
-\toprule
-\textbf{Training Order} & \textbf{Val MPE $\downarrow$} & \textbf{OOD MPE $\downarrow$} \\
-\midrule
-Random shuffle & 27.6 & 52.3 \\
-\textbf{Curriculum (ours)} & \textbf{22.6} & \textbf{38.2} \\
-\midrule
-Improvement & 18.1\% & 27.0\% \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\paragraph{Context length.}
-We ablate the number of context frames $K \in \{1, 2, 4, 8\}$ at inference time.
-Results (Table~\ref{tab:ablation_context}) show that 4 context frames strikes the
-best balance: too few frames miss velocity trends (especially for rotating objects),
-while 8 frames fill the context window faster and increase inference latency
-without proportional accuracy gains.
-
-\begin{table}[t]
-\centering
-\caption{Ablation: number of context frames $K$ at inference.}
-\label{tab:ablation_context}
-\small
-\begin{tabular}{ccc}
-\toprule
-\textbf{Context frames $K$} & \textbf{Val MPE $\downarrow$} & \textbf{Tokens/query} \\
-\midrule
-1 & 38.4 & $\approx$340 \\
-2 & 29.1 & $\approx$580 \\
-4 & \textbf{22.6} & $\approx$1{,}060 \\
-8 & 22.1 & $\approx$2{,}100 \\
-\bottomrule
-\end{tabular}
-\end{table}
+The ten best and ten worst scenarios by MSE span nearly five orders of magnitude
+(0.02--5910\,px$^2$), illustrating that scenario type is the dominant predictor
+of PhysicsLM accuracy. The five best scenarios are all constraint- or
+stacking-type (\texttt{newtons\_cradle}, \texttt{bridge}, \texttt{jenga},
+\texttt{dominos}, \texttt{pyramid}), while the five worst are all
+high-entropy collision-dominated scenarios (\texttt{pinball}, \texttt{avalanche},
+\texttt{pong}, \texttt{hourglass}, \texttt{angry\_birds}). Cross-entropy loss
+is a poor proxy for position MSE: \texttt{plinko} achieves very low loss
+(0.282) because the model learns the \emph{format} of the output well, yet has
+high positional error (MSE = 132\,px$^2$) because the scenario involves chaotic
+ball paths that are hard to predict precisely.
 
 %─────────────────────────────────────────────────────────────────────────────
 \section{Discussion and Limitations}
@@ -731,17 +662,20 @@ diversity are immediate future directions.
 \label{sec:conclusion}
 %─────────────────────────────────────────────────────────────────────────────
 
-We have presented PhysicsLM, a system that reframes 2D rigid-body physics simulation
-as autoregressive language modeling. By representing simulation state as structured
-decimal text and fine-tuning a 350M-parameter language model via LoRA on 900K
-generated scenes with a 5-stage difficulty curriculum, we achieve 22.64 px
-mean position error ($\approx$3\% of scene diagonal), 100\% parse rate, and
-stable 50-frame rollouts—without any symbolic physics solver at test time.
-Our PhysicsScenes dataset and WebGPU browser deployment lower the barrier to
-experimenting with LM-based physics simulation. We hope this work motivates
-further exploration of the intersection of language modeling and physical world
-modeling, including extensions to 3D, deformable media, and energy-conserving
-decoding.
+We have presented PhysicsLM, a system that reframes 2D rigid-body physics
+simulation as autoregressive language modeling. By encoding simulation state as
+structured decimal text and fine-tuning a 350M-parameter LFM2 model via LoRA on
+900K generated scenes with a 5-stage difficulty curriculum, we achieve
+\textbf{0.0\% parse failure rate} across all 30 scenario types (including 6
+held-out OOD types), an overall position RMSE of \textbf{18.85\,px} on seen
+scenarios, and excellent OOD generalization on constraint and collision types
+(e.g., \texttt{newtons\_cradle} RMSE = 0.14\,px despite not appearing in
+training). Performance degrades on high-entropy scenarios (\texttt{pinball},
+\texttt{avalanche}, \texttt{pong}), pointing to the limits of token-level
+next-frame prediction for chaotic dynamics. The PhysicsScenes dataset, training
+code, and WebGPU browser demo are publicly released. We hope this work spurs
+further exploration of LM-based physical world modeling, including energy-conserving
+decoding, 3D extension, and richer OOD benchmarks.
 
 %─────────────────────────────────────────────────────────────────────────────
 \section*{Acknowledgments}
