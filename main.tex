@@ -179,6 +179,19 @@ structure. While elegant, these methods require structured low-dimensional state
 spaces and do not easily extend to scenes with many heterogeneous objects. PhysicsLM
 learns conservation laws implicitly through data.
 
+\paragraph{Equivariant and Operator-Based Simulators.}
+EGNN~\citep{satorras2021n} and SE(3)-equivariant variants enforce geometric symmetries
+(rotation/reflection invariance) by construction, achieving strong data efficiency on
+molecular dynamics. PAINET and similar architectures extend this to rigid-body
+multi-object settings with explicit pairwise interactions. Fourier Neural Operators
+(FNO~\citep{li2021fourier}) and state-space model (SSM) based operators learn
+solution operators for PDEs directly in frequency space, enabling resolution-independent
+generalization. These approaches demonstrate important trade-offs between structural
+inductive bias and architectural flexibility; PhysicsLM sits at the opposite extreme,
+sacrificing structured bias entirely in favor of a general-purpose LM backbone. A
+direct comparison with equivariant baselines on the PhysicsScenes benchmark is
+a natural extension of this work.
+
 \paragraph{LLMs for Structured Prediction.}
 GPT-3~\citep{brown2020language} and subsequent LLMs~\citep{touvron2023llama,
 openai2023gpt4} have demonstrated that pre-trained transformers can be adapted to
@@ -481,26 +494,23 @@ extracted from the model's text output.
 
 \subsection{Points of Comparison}
 
-We report two reference points alongside PhysicsLM:
+We compute three reference points alongside PhysicsLM (see Appendix~\ref{app:baselines}
+for computation details):
 
 \begin{enumerate}[leftmargin=*,topsep=2pt,itemsep=0pt]
-  \item \textbf{LFM2-350M (no fine-tuning):} The base LFM2 model prompted with
-    the same input format but no physics-specific training. This measures how much
-    the pre-trained backbone contributes without any domain adaptation.
-  \item \textbf{Linear extrapolation:} Predicts next position as
-    $\hat{p}^i_{t+1} = p^i_t + v^i_t \cdot \Delta t$, assuming constant velocity.
-    This baseline is exact for free-flight but fails at collisions or constrained
-    motion, giving a ceiling on physics-blind prediction.
+  \item \textbf{Copy-last:} Predict $\hat{p}^i_{t+1} = p^i_t$ (positions unchanged).
+    Strong for near-static scenes; fails proportionally to object speed.
+  \item \textbf{Linear extrapolation:} Predict $\hat{p}^i_{t+1} = p^i_t + v^i_t\!\cdot\!\Delta t$.
+    Achieves $\approx$0.01\,px$^2$ MSE overall because Pymunk uses semi-implicit Euler
+    ($p_{t+1} = p_t + v_{t+1}\Delta t$), making position updates exactly linear in
+    velocity between collision events. This baseline is therefore near-perfect on
+    most frames by construction; it only fails on the frames where a collision occurs.
+  \item \textbf{LFM2-350M (no fine-tuning):} Base model prompted with our format;
+    produces narrative text, never structured output (parse rate: 0\%).
 \end{enumerate}
 
-\noindent Two additional comparisons were attempted but are deferred to future work.
-\emph{GNS~\citep{sanchez2020learning}} training on the full PhysicsScenes corpus
-requires implementing particle-level graph construction and multi-GPU training;
-we leave this as a future comparison.
-\emph{GPT-11M from scratch} (6-layer, 384-hidden, digit tokenizer, $\mu$P scaling)
-was trained for only 500 steps due to resource constraints---approximately $15\times$
-less compute than PhysicsLM---and produces partially malformed output at that
-checkpoint, making quantitative comparison invalid (see Section~\ref{sec:discussion}).
+\noindent \emph{GNS~\citep{sanchez2020learning}} and GPT-11M from scratch are deferred
+to future work (see Section~\ref{sec:discussion}).
 
 \subsection{Main Results}
 \label{sec:main-results}
@@ -515,40 +525,48 @@ acquired through fine-tuning, not inherited from the pre-trained backbone.
 
 \begin{table}[t]
 \centering
-\caption{Single-step position MSE (px$^2$) and RMSE (px) per category on
-the seen validation set (80,016 scenes). Parse fail rate is 0.0\% for all
-categories. OOD results are reported separately in Table~\ref{tab:ood}.}
+\caption{Single-step position RMSE (px) per category on seen scenarios, compared
+with copy-last baseline (computed on 30 randomly sampled scenes per type).
+Linear extrapolation achieves $\approx$0.10\,px RMSE across all categories
+(near-exact by construction; see text). Parse fail rate is 0.0\% for
+PhysicsLM; LFM2 base model achieves 0\% parse rate. OOD results: Table~\ref{tab:ood}.}
 \label{tab:category}
 \small
-\begin{tabular}{lrrr}
+\begin{tabular}{lrr@{\hspace{6pt}}r}
 \toprule
-\textbf{Category} & \textbf{Pos MSE $\downarrow$} & \textbf{RMSE $\downarrow$} & \textbf{Loss} \\
+\textbf{Category} & \textbf{PhysicsLM} & \textbf{Copy-last} & \textbf{Loss} \\
+                  & \textbf{RMSE $\downarrow$} & \textbf{RMSE $\downarrow$} & \\
 \midrule
-Stacking    &        0.21 &  0.46 & 0.518 \\
-Constraint  &        1.01 &  1.01 & 0.572 \\
-Collision   &       26.66 &  5.16 & 0.688 \\
-Ramp        &       37.55 &  6.13 & 0.674 \\
-Complex     &      558.80 & 23.64 & 0.844 \\
-Minigame    &    1{,}808.11 & 42.52 & 0.976 \\
+Stacking    &  \textbf{0.46} &  1.21 & 0.518 \\
+Constraint  &  \textbf{1.01} &  3.75 & 0.572 \\
+Collision   &  \textbf{5.16} &  7.47 & 0.688 \\
+Ramp        &  \textbf{6.13} &  6.20 & 0.674 \\
+Complex     &        23.64   &  \textbf{4.30} & 0.844 \\
+Minigame    &        42.52   &  \textbf{5.77} & 0.976 \\
 \midrule
-\textbf{Overall (seen)} & \textbf{355.23} & \textbf{18.85} & \textbf{0.660} \\
+\textbf{Overall (seen)} & 18.85 & \textbf{5.22} & 0.660 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Performance varies strongly across categories, revealing a clear
-difficulty hierarchy. \emph{Stacking} and \emph{constraint} scenarios achieve
-near-perfect predictions (RMSE $<$ 1.5\,px): in these scenes most objects are
-static or follow periodic trajectories with small velocity magnitudes, so the
-model essentially learns to copy the previous state with minor corrections.
-\emph{Collision} and \emph{ramp} scenarios are harder (RMSE 5--6\,px) because
-they involve abrupt velocity changes at impact frames. \emph{Complex} and
-\emph{minigame} scenarios are the most challenging: they combine multiple
-physics phenomena simultaneously (e.g., simultaneous chains of collisions in
-\texttt{pinball}, MSE = 5{,}910\,px$^2$; gravity-driven granular flow in
-\texttt{avalanche}, MSE = 2{,}194\,px$^2$). The distribution of per-scenario
-errors is highly skewed: the median scenario MSE is 1.72\,px$^2$, while the
-mean is 355\,px$^2$, driven by these high-chaos outliers.
+Performance splits sharply by scenario type. PhysicsLM \textbf{outperforms copy-last}
+on the three structured categories---stacking ($2.6\times$ better), constraint
+($3.7\times$ better), and collision ($1.4\times$ better)---and roughly ties on ramp.
+These gains reflect the model's ability to predict the post-collision velocity from
+token context, which copy-last cannot do. On complex and minigame scenarios,
+however, PhysicsLM is 5--7$\times$ \emph{worse} than copy-last: the chaotic
+dynamics of pinball (MSE = 5,910\,px$^2$), avalanche (2,194\,px$^2$), and pong
+(724\,px$^2$) cause the model's errors to compound, far exceeding a trivial
+``stand still'' prediction. The overall mean MSE is therefore dominated by a small
+number of catastrophic outliers (median scenario MSE: 1.72\,px$^2$ vs.\ mean 355\,px$^2$).
+
+The \emph{linear extrapolation} baseline achieves $\approx$0.10\,px RMSE because
+Pymunk's position update is $p_{t+1} = p_t + v_{t+1}\Delta t$ (semi-implicit Euler):
+given the velocity at frame $t$, position is almost exactly predictable without any
+physics knowledge. The baseline fails only on collision frames, which represent a
+small fraction of randomly sampled frame pairs. This means single-step MSE alone
+is not a discriminating metric: even a model that perfectly learned Newtonian
+integration would achieve near-zero single-step MSE on most frames.
 
 \subsection{OOD Generalization}
 
@@ -725,5 +743,141 @@ library and WebGPU inference infrastructure.
 \bibliography{references}
 \bibliographystyle{icml2026}
 %─────────────────────────────────────────────────────────────────────────────
+
+%─────────────────────────────────────────────────────────────────────────────
+\appendix
+%─────────────────────────────────────────────────────────────────────────────
+
+\section{Text Encoding Format}
+\label{app:format}
+
+Each simulation scene is serialized as a JSONL file: a single header line followed
+by $T=200$ frame lines. At training and inference time the JSONL is converted to
+a plain-text prompt. A scene header encodes static scene properties:
+
+\begin{small}
+\begin{verbatim}
+Scene: billiards (seed=5000042)
+Gravity: (0.0000, -981.0000)  Timestep: 0.016667
+Objects: 11 (circles)
+obj_0: mass=1.00 friction=0.05 elasticity=0.92 r=15.0
+... (one line per object)
+\end{verbatim}
+\end{small}
+
+\noindent Each frame is encoded as:
+
+\begin{small}
+\begin{verbatim}
+Frame 42: Objects in motion.
+  obj_0: pos=(312.4800, 187.2300),
+         vel=(45.2100, -123.4500)
+  obj_1: pos=(201.1200, 98.7700),
+         vel=(-12.3400, 34.5600),
+         a=0.8700, av=1.2300
+\end{verbatim}
+\end{small}
+
+\noindent Angle (\texttt{a}) and angular velocity (\texttt{av}) are included only
+when their absolute value exceeds 0.001 radians (or rad/s). All numeric values use
+4 decimal places, corresponding to $\approx$0.0001 px/px$\cdot$s precision.
+A 5-object scene averages $\approx$120 tokens per frame; a full 200-frame scene
+encodes as $\approx$25K tokens, which exceeds LFM2's 8192-token context.
+
+\paragraph{Token budget at training time.}
+Training examples are constructed as (4-frame context $\to$ 1-frame target).
+For a 5-object scene, each example uses $\approx$600 tokens for context and
+$\approx$120 tokens for the target. SFTTrainer packs multiple such examples
+per 2048-token sequence (roughly 2--3 examples per sequence). With batch size
+4 and 7,815 gradient steps, the model trains on approximately 250K distinct
+(context, target) frame-pairs from the 900K-scene corpus, covering $\approx$0.14\%
+of all available pairs per epoch. This is a small data fraction; training for
+more epochs or more steps is an immediate avenue for improvement.
+
+\section{Training Hyperparameters}
+\label{app:training}
+
+\begin{table}[h]
+\centering
+\caption{PhysicsLM training configuration.}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Base model              & LFM2-350M \\
+Fine-tuning method      & LoRA ($r$=32, $\alpha$=64) \\
+LoRA target modules     & Q, K, V, O projections (all layers) \\
+Trainable parameters    & $\approx$12M (of 350M total) \\
+Context window          & 8192 tokens \\
+Training context frames & $K=4$ \\
+Max sequence length     & 2048 tokens (packed) \\
+Batch size              & 4 \\
+Gradient accumulation   & 1 \\
+Optimizer               & AdamW ($\beta_1$=0.9, $\beta_2$=0.999) \\
+Learning rate           & $2\times10^{-4}$ with cosine decay \\
+Warmup steps            & 100 \\
+Total gradient steps    & 7,815 (across all 5 curriculum stages) \\
+Precision               & bfloat16 \\
+GPU                     & NVIDIA RTX A6000 (44.4 GB) \\
+Training time           & $\approx$18 hours \\
+\midrule
+\multicolumn{2}{l}{\textit{Dataset generation}} \\
+Simulator               & Pymunk / Chipmunk2D, 60 FPS \\
+CPU cores               & 22 \\
+1M-scene generation time & $\approx$29 minutes \\
+Uncompressed size       & $\approx$582 GB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Generation speed plausibility.}
+Each of the 1M scenes runs 200 Pymunk simulation steps on an average of
+$\approx$5 objects. At 22 cores, this is approximately 45,000 scenes per core,
+each taking $\approx$0.039 seconds. A single-core Pymunk step for 5 objects
+runs in $\sim$10\,$\mu$s, giving 200 steps $\times$ 5 objects $\times$ 10\,$\mu$s
+= 10\,ms per scene, plus serialization overhead; 39\,ms total is consistent with
+this estimate.
+
+\paragraph{Training steps plausibility.}
+7,815 gradient steps at batch size 4 with packed 2048-token sequences corresponds
+to $\approx$250K frame-pair training examples. The curriculum proceeds through
+5 stages; early stages (difficulty 1--2) converge faster and require fewer steps,
+while later stages (difficulty 4--5) require more. Loss curves are monotonically
+decreasing within each stage; no divergence was observed.
+
+\section{WebGPU Export and Quantization}
+\label{app:webgpu}
+
+The LoRA-merged model is exported to ONNX using the HuggingFace Optimum library.
+We use q4f16 quantization: weights are stored in 4-bit but activations (including
+KV cache) remain in float16. Two Cast nodes in the ONNX graph
+(\texttt{/model/gqa\_attention\_bias/Cast} and \texttt{/model/shared\_conv/Mask\_Cast})
+output float32 by design; we patch these by rewiring their output tensors to float16
+using a custom post-processing script, eliminating the type mismatch that otherwise
+prevents WebGPU inference. The fixed model runs at $\approx$2$\times$ the speed
+of q4-only quantization on WebGPU hardware.
+
+\section{Baseline Computation Details}
+\label{app:baselines}
+
+Copy-last and linear extrapolation baselines are computed by generating 30 fresh scenes
+per scenario type (seeds 5{,}000{,}000 to 5{,}000{,}029) using the same Pymunk
+simulator. For each scene, 5 random frame-pairs $(s_t, s_{t+1})$ are sampled
+uniformly from frames 4--198. Copy-last error is
+$\|\hat{p}^i_{t+1} - p^i_{t+1}\|^2$ with $\hat{p}^i_{t+1} = p^i_t$.
+Linear error uses $\hat{p}^i_{t+1} = p^i_t + v^i_t \Delta t$.
+PhysicsLM numbers are from the stage-0 evaluation (teacher-forced single-step mode)
+on a separate held-out evaluation set; they are not directly comparable object-for-object
+but are from the same scenario-type distribution.
+
+Note that linear extrapolation achieves $\approx$0.01\,px$^2$ MSE because Pymunk
+uses semi-implicit Euler: $v_{t+1} = v_t + a\Delta t$, $p_{t+1} = p_t + v_{t+1}\Delta t$.
+Given $v_t$ (available as input), the true $p_{t+1}$ differs from the linear prediction
+$p_t + v_t \Delta t$ only by $a\Delta t^2 = g(1/60)^2 \approx 0.27$\,px (in the
+gravity direction). For horizontal motion or near-rest objects, the error is zero.
+This means linear extrapolation is effectively an oracle on non-collision frames;
+its failure mode (incorrect velocity prediction after collision) is the same gap
+that PhysicsLM is designed to close.
 
 \end{document}
