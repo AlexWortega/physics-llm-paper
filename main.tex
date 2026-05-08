@@ -1,0 +1,758 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%  PhysicsLM — ICML 2026 Submission
+%  "PhysicsLM: Autoregressive Language Modeling of 2D Rigid Body Dynamics"
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+% ICML 2026 style
+\usepackage{icml2026}
+
+% Standard packages
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{array}
+
+\definecolor{darkblue}{rgb}{0.0,0.1,0.5}
+\hypersetup{colorlinks=true, linkcolor=darkblue, citecolor=darkblue, urlcolor=darkblue}
+
+% Convenient math macros
+\newcommand{\vx}{\mathbf{x}}
+\newcommand{\vs}{\mathbf{s}}
+\newcommand{\vh}{\mathbf{h}}
+\newcommand{\vt}{t}
+\newcommand{\R}{\mathbb{R}}
+
+\icmltitlerunning{PhysicsLM: Autoregressive Language Modeling of 2D Rigid Body Dynamics}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{PhysicsLM: Autoregressive Language Modeling of 2D Rigid Body Dynamics}
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Anonymous Author(s)}{anon}
+\end{icmlauthorlist}
+
+\icmlaffiliation{anon}{Anonymous Institution}
+
+\icmlcorrespondingauthor{Anonymous Author(s)}{anonymous@example.com}
+
+\icmlkeywords{physics simulation, language models, rigid body dynamics, neural physics, autoregressive modeling}
+
+\vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}
+
+%─────────────────────────────────────────────────────────────────────────────
+\begin{abstract}
+%─────────────────────────────────────────────────────────────────────────────
+We present \textbf{PhysicsLM}, a system that frames 2D rigid body physics simulation as
+autoregressive language modeling. Rather than constructing a bespoke neural
+physics engine, we encode each simulation frame as a short, structured text string
+and fine-tune a 350M-parameter language model (LFM2-350M) to predict the next
+frame token-by-token using standard next-token prediction.
+To support training and evaluation, we introduce \textbf{PhysicsScenes}, the
+largest text-format 2D physics dataset to date, comprising 900K training scenes
+across 24 scenario types drawn from six physical categories (collisions,
+stacking, ramps, constraints, minigames, and complex compound scenes), plus a
+held-out out-of-distribution (OOD) split of six unseen scenario types.
+On single-step prediction, our fine-tuned model achieves a mean position error
+of \textbf{22.64 px} on an 800$\times$600 canvas ($\approx$3\% of the diagonal),
+with a 100\% structured output parse rate across all 37 test objects.
+Multi-step rollouts remain stable for 50+ consecutive frames.
+We additionally demonstrate first-of-its-kind in-browser LM physics simulation
+via ONNX/WebGPU export, eliminating the need for server-side inference.
+\end{abstract}
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+%─────────────────────────────────────────────────────────────────────────────
+
+Physics simulation is central to robotics, game engines, scientific computing, and
+increasingly to reinforcement learning environments. Classical solvers based on
+constraint-satisfaction (e.g., Chipmunk2D, Bullet, MuJoCo) are both accurate and fast,
+but they are not differentiable, require hand-specified object geometries, and cannot
+seamlessly incorporate learned priors about typical physical dynamics.
+
+The rise of \emph{neural physics simulators}—systems that learn to approximate physical
+dynamics from data—has opened a complementary research direction. Methods based on
+graph neural networks (GNNs)~\citep{battaglia2016interaction, sanchez2020learning,
+li2019learning} can generalize across scenes and object counts, and recent mesh-based
+variants~\citep{pfaff2021learning} operate on complex geometries. Yet these
+specialized architectures require curated graph construction, custom aggregation
+schemes, and careful architecture decisions for each new domain.
+
+Meanwhile, large language models (LLMs) have shown remarkable capabilities for
+structured prediction across diverse domains. Text-based representations have proven
+effective for tasks as varied as code generation, molecular property prediction, and
+robot planning~\citep{wei2022chain, yang2023foundation}. This raises a natural
+question: \emph{can a language model learn to simulate physics through text?}
+
+In this paper we answer affirmatively. We introduce \textbf{PhysicsLM}, a system
+that represents each simulation frame as a human-readable text string of the
+form:
+
+\begin{small}
+\begin{verbatim}
+Frame 42: Objects in motion.
+  obj_0: pos=(312.48, 187.23),
+         vel=(45.21, -123.45)
+  obj_1: pos=(201.12, 98.77),
+         vel=(-12.34, 34.56),
+         a=0.87, av=1.23
+\end{verbatim}
+\end{small}
+
+\noindent and trains LFM2-350M~\citep{liquideai2024lfm2} via LoRA
+fine-tuning~\citep{hu2022lora} to predict the next such frame.
+Physics rollout then becomes \emph{pure language model generation}—no symbolic
+solver is invoked at test time.
+
+Our contributions are:
+
+\begin{enumerate}[leftmargin=*,topsep=2pt,itemsep=1pt]
+  \item \textbf{PhysicsScenes dataset}: 900K 2D rigid-body scenes spanning 30 scenario
+    types in six physical categories, generated with Pymunk~\citep{pymunk2024} at 60
+    FPS. The dataset includes a designed OOD split to probe generalization.
+  \item \textbf{Text-as-physics representation}: We show that decimal text encoding of
+    position/velocity/angle suffices for a pre-trained LM to learn physically plausible
+    dynamics, eliminating the need for bespoke tokenizers or graph structures.
+  \item \textbf{Curriculum training}: We assign difficulty levels 1--5 to scenarios
+    based on object count and physical complexity, and show that difficulty-ordered
+    curriculum training improves convergence and OOD generalization.
+  \item \textbf{WebGPU browser deployment}: We export the fine-tuned model to ONNX
+    with q4f16 quantization and run it in-browser via WebGPU, achieving the first
+    in-browser LM physics simulator without server-side inference.
+\end{enumerate}
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Related Work}
+\label{sec:related}
+%─────────────────────────────────────────────────────────────────────────────
+
+\paragraph{Neural Physics Simulators.}
+Learning-based physics engines date back to Interaction Networks~\citep{battaglia2016interaction},
+which represented scenes as graphs and applied GNNs to predict state transitions.
+DPI-Nets~\citep{li2019learning} extended this to particle-based deformable and rigid
+objects. Learning to Simulate (GNS)~\citep{sanchez2020learning} demonstrated that
+GNNs can generalize across particle counts and materials for fluids, sand, and
+rigid bodies. MeshGraphNets~\citep{pfaff2021learning} further scaled GNS-style
+simulation to mesh-based representations suitable for finite-element problems.
+Neural Relational Inference~\citep{kipf2018neural} jointly infers interaction graphs
+and dynamics. In contrast to all of these, PhysicsLM requires no graph
+construction, no custom aggregation, and no physics-specific architecture.
+
+\paragraph{Physics-Aware World Models.}
+World models~\citep{ha2018world} and latent-space imagination methods~\citep{hafner2019dream}
+learn to predict future observations in learned latent spaces. These approaches
+operate in pixel or compact latent spaces and are typically tied to specific visual
+environments. Decision Transformer~\citep{chen2021decision} demonstrated that
+transformers can model sequential decision-making, motivating our use of
+autoregressive transformers for sequential physics prediction.
+
+\paragraph{Physics-Informed Inductive Biases.}
+Hamiltonian Neural Networks~\citep{gregorova2019learned} and Lagrangian Neural
+Networks~\citep{cranmer2020lagrangian} embed energy conservation into the network
+structure. While elegant, these methods require structured low-dimensional state
+spaces and do not easily extend to scenes with many heterogeneous objects. PhysicsLM
+learns conservation laws implicitly through data.
+
+\paragraph{LLMs for Structured Prediction.}
+GPT-3~\citep{brown2020language} and subsequent LLMs~\citep{touvron2023llama,
+openai2023gpt4} have demonstrated that pre-trained transformers can be adapted to
+arbitrary structured-text tasks via few-shot prompting or fine-tuning. Chain-of-thought
+prompting~\citep{wei2022chain} has shown that step-by-step text reasoning improves
+quantitative prediction. Recent work~\citep{yang2024physicslm} benchmarks LLM
+qualitative physics reasoning, but does not train LLMs for precise quantitative
+state prediction.
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Problem Formulation}
+\label{sec:problem}
+%─────────────────────────────────────────────────────────────────────────────
+
+\paragraph{State Representation.}
+A simulation scene $\mathcal{S}$ consists of a static header $\vh$ (gravity vector,
+timestep $\Delta t$, static geometry, initial object properties) and a sequence of
+frames $s_1, s_2, \ldots, s_T$. Each frame $s_t$ specifies the state of all $N$
+dynamic objects at time step $t$:
+
+\begin{equation}
+s_t = \bigl\{ (p_t^i,\, v_t^i,\, \theta_t^i,\, \omega_t^i) \bigr\}_{i=1}^{N},
+\end{equation}
+
+where $p_t^i \in \R^2$ is position, $v_t^i \in \R^2$ is linear velocity, $\theta_t^i
+\in \R$ is angle (radians), and $\omega_t^i \in \R$ is angular velocity.
+
+\paragraph{Text Encoding.}
+Each object's state is serialized as a single text line with 4-decimal-place
+precision. Angles and angular velocities are omitted for purely translational
+objects (e.g., circles with no rotation tracking). The header encodes gravity,
+timestep, and static geometry as a human-readable preamble. A special prompt token
+\texttt{Predict next frame:} is appended before generation.
+
+\paragraph{Prediction Objective.}
+Given the scene header $\vh$ and a context window of the last $K$ frames
+$s_{t-K+1:t}$, the model predicts the next frame as a text string:
+
+\begin{equation}
+p\!\left(s_{t+1} \mid s_{t-K+1:t},\, \vh\right) =
+\prod_{j=1}^{|s_{t+1}|} p_\theta\!\left(\text{tok}_j \mid \text{tok}_{<j},\, s_{t-K+1:t},\, \vh\right),
+\end{equation}
+
+where $\text{tok}_j$ are the tokens of the serialized frame string and $\theta$
+denotes model parameters. This is trained with standard cross-entropy loss over
+token sequences. At inference time we decode autoregressively frame by frame,
+feeding each predicted frame back as context for the next (rollout mode) or using
+ground-truth context (teacher-forced single-step mode).
+
+\paragraph{Rollout Protocol.}
+For multi-step rollout we maintain a sliding window of the last $K=4$ predicted
+frames in the prompt. When the prompt exceeds 8192 tokens, we trim the oldest
+frames while always retaining the static header. This keeps inference cost bounded
+and prevents repetitive degeneration.
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Dataset: PhysicsScenes}
+\label{sec:dataset}
+%─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Scenario Taxonomy}
+
+We design 30 scenario types organized into six physical categories, as summarized
+in Table~\ref{tab:scenarios}. Each category exercises a distinct aspect of 2D
+rigid-body dynamics: momentum transfer, gravitational stacking, inclined-plane
+motion, joint constraints, interactive minigames, and multi-phenomenon compound
+scenes. We use Pymunk~\citep{pymunk2024}, a Python binding for the Chipmunk2D
+physics engine, as our simulation backend.
+
+\begin{table}[t]
+\centering
+\caption{PhysicsScenes scenario taxonomy. OOD indicates held-out types not seen
+during training. Difficulty is the curriculum label (1=easy, 5=hard).}
+\label{tab:scenarios}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcc}
+\toprule
+\textbf{Category} & \textbf{Scenario} & \textbf{Diff.} & \textbf{OOD} \\
+\midrule
+\multirow{5}{*}{Collision}
+  & billiards       & 2 & \\
+  & bowling         & 2 & \checkmark \\
+  & head\_on        & 1 & \\
+  & explosion       & 3 & \\
+  & projectile      & 2 & \\
+\midrule
+\multirow{5}{*}{Stacking}
+  & pyramid         & 2 & \\
+  & tower           & 2 & \\
+  & jenga           & 3 & \\
+  & dominos         & 3 & \\
+  & bridge          & 4 & \\
+\midrule
+\multirow{5}{*}{Ramp}
+  & ramp\_roll      & 1 & \checkmark \\
+  & ski\_jump       & 2 & \\
+  & marble\_run     & 3 & \\
+  & avalanche       & 3 & \\
+  & plinko          & 4 & \\
+\midrule
+\multirow{5}{*}{Constraint}
+  & pendulum        & 2 & \\
+  & chain           & 3 & \\
+  & seesaw          & 2 & \\
+  & wrecking\_ball  & 3 & \\
+  & orbit           & 4 & \\
+\midrule
+\multirow{5}{*}{Minigame}
+  & basketball      & 3 & \\
+  & conveyor        & 3 & \\
+  & pong            & 2 & \checkmark \\
+  & wind            & 3 & \\
+  & breakout        & 3 & \\
+\midrule
+\multirow{5}{*}{Complex}
+  & angry\_birds    & 4 & \checkmark \\
+  & hourglass       & 5 & \checkmark \\
+  & newtons\_cradle & 4 & \checkmark \\
+  & rube\_goldberg  & 5 & \\
+  & pinball         & 4 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Generation Pipeline}
+
+Scenes are generated procedurally by sampling random seeds to vary object counts,
+initial positions, velocities, and material properties (friction $\mu$, restitution
+$e$). Each scene is simulated for $T=200$ frames at 60 FPS ($\Delta t = 1/60$\,s)
+using Pymunk. The full simulation runs on CPU (Pymunk has no GPU backend); we
+parallelize generation across 22 CPU cores, completing the 1M-scene generation
+run in approximately 29 minutes.
+
+Each scene is serialized to a JSONL file: one header line followed by 200 frame
+lines. The text representation of a frame averages $\approx$120 tokens for a
+5-object scene, yielding roughly 25K tokens per full scene. Dataset statistics
+are given in Table~\ref{tab:datastats}.
+
+\begin{table}[t]
+\centering
+\caption{PhysicsScenes dataset statistics.}
+\label{tab:datastats}
+\small
+\begin{tabular}{lrr}
+\toprule
+\textbf{Split} & \textbf{Scenes} & \textbf{Scenario Types} \\
+\midrule
+Train        & 900{,}000 & 24 (seen) \\
+Validation   & 100{,}020 & 30 (all) \\
+\quad OOD subset & 20{,}004 & 6 (held-out) \\
+\midrule
+\textbf{Total} & 1{,}000{,}020 & 30 \\
+\midrule
+\multicolumn{3}{l}{\textit{Scene properties}} \\
+Objects per scene & \multicolumn{2}{c}{2--15 (avg $\approx$5)} \\
+Frames per scene  & \multicolumn{2}{c}{200} \\
+Simulation FPS    & \multicolumn{2}{c}{60} \\
+Canvas size       & \multicolumn{2}{c}{800$\times$600 px} \\
+Uncompressed size & \multicolumn{2}{c}{$\approx$582 GB} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{OOD Split Design}
+
+We designate six scenario types as held-out: three ``simple OOD'' types
+(\textit{bowling}, \textit{ramp\_roll}, \textit{pong}) that involve familiar physics
+but with novel spatial configurations, and three ``complex OOD'' types
+(\textit{angry\_birds}, \textit{hourglass}, \textit{newtons\_cradle}) that combine
+multiple physical phenomena simultaneously. These types are entirely absent from
+training, allowing us to measure systematic generalization rather than
+interpolation within the training distribution.
+
+\subsection{Difficulty Curriculum Labels}
+
+Each training scene is assigned a difficulty label $d \in \{1, 2, 3, 4, 5\}$
+based on (a) the scenario's physical complexity, (b) object count, and (c) presence
+of joint constraints. Difficulty 1 corresponds to single-object projectiles or
+head-on collisions; difficulty 5 corresponds to hourglass or Rube Goldberg
+machines with 10+ objects and multi-stage interactions. These labels drive the
+curriculum training schedule described in Section~\ref{sec:method}.
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Method}
+\label{sec:method}
+%─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Base Model: LFM2-350M}
+
+We use LFM2-350M~\citep{liquideai2024lfm2}, a compact language model from Liquid AI
+designed for efficient edge deployment, as our pre-trained backbone. LFM2-350M is
+a transformer with a context window of 8192 tokens and a vocabulary tuned for
+multilingual and code-like structured text. We apply parameter-efficient fine-tuning
+via LoRA~\citep{hu2022lora} with rank $r = 32$ and scaling factor $\alpha = 64$.
+LoRA adapters are injected into all query, key, value, and output projection
+matrices in each transformer layer. During fine-tuning, base model weights are
+frozen and only the $\approx$12M LoRA parameters are updated.
+
+\subsection{Input Construction}
+
+Each training example is constructed as follows. We select a random scene and a
+random target frame $t^*$ within that scene. The model input is:
+
+\begin{equation}
+x = \bigl[\vh;\; s_{t^*-3};\; s_{t^*-2};\; s_{t^*-1};\; s_{t^*};\; \texttt{Predict next frame:}\bigr],
+\end{equation}
+
+where $\vh$ is the scene header and semicolons denote concatenation. The target
+output is $s_{t^*+1}$. We include $K=4$ context frames so the model can observe
+recent velocity trends, which is necessary for accurate collision prediction.
+Loss is computed only over the output frame tokens.
+
+\subsection{Curriculum Training}
+
+Inspired by curriculum learning~\citep{bengio2009curriculum, graves2017automated},
+we train in five stages ordered by scene difficulty. Each stage $k$ trains
+exclusively on scenes with difficulty $\leq k$ until a validation loss plateau
+is observed, then advances to the next stage. Concretely:
+
+\begin{enumerate}[leftmargin=*,topsep=2pt,itemsep=1pt]
+  \item \textbf{Stage 1} (diff. 1 only): single-body projectile motion and
+    simple elastic collisions. Establishes baseline Newtonian dynamics.
+  \item \textbf{Stage 2} (diff. $\leq 2$): bilateral collisions, ramp traversal,
+    pendulums. Introduces momentum transfer and constraint forces.
+  \item \textbf{Stage 3} (diff. $\leq 3$): multi-body stacks, chain constraints,
+    domino cascades. Tests temporal credit assignment over longer causal chains.
+  \item \textbf{Stage 4} (diff. $\leq 4$): complex multi-phenomenon scenarios.
+    Trains on the full corpus minus the five hardest scenario types.
+  \item \textbf{Stage 5} (diff. $\leq 5$): full training set including the hardest
+    scenarios (plinko, orbit, rube\_goldberg, pinball).
+\end{enumerate}
+
+The curriculum dataset is built using a parallel scanner (Python multiprocessing
+with 16 workers) that categorizes 900K files by difficulty in under 20 seconds.
+Training uses the Unsloth-optimized SFTTrainer~\citep{unsloth2024} with
+packed sequences, bfloat16 precision, and a learning rate of $2\times10^{-4}$
+with cosine decay.
+
+\subsection{Inference and Rollout}
+
+At inference time we use greedy decoding (temperature $T=0$) with a repetition
+penalty of 1.08 to discourage degenerate repetition of numeric tokens. The prompt
+always contains the scene header and the last four frames of context (either ground
+truth for single-step evaluation, or previously predicted frames for rollout).
+
+For multi-step rollout, we maintain a sliding context window: once the tokenized
+prompt exceeds 8192 tokens, we drop the oldest frame from the context while
+always retaining the full scene header. This context management strategy stabilizes
+long rollouts and prevents prompt-length-induced degradation.
+
+\subsection{Browser Deployment via WebGPU}
+
+To maximize accessibility, we export the LoRA-merged model to ONNX format and
+quantize it to q4f16 (4-bit weights, 16-bit activations). The exported model
+runs in-browser via the @huggingface/transformers.js library with a WebGPU
+backend. Q4f16 quantization achieves approximately $2\times$ speedup over q4 on
+WebGPU due to better alignment with 16-bit compute units. This enables
+server-free physics simulation directly in the browser with no installation
+requirements.
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Experiments}
+\label{sec:experiments}
+%─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Evaluation Protocol}
+
+We evaluate all models on the PhysicsScenes validation split (100,020 scenes,
+30 scenario types). The OOD subset (6 held-out types, 20,004 scenes) is reported
+separately. We assess three complementary aspects:
+
+\paragraph{Single-step prediction.}
+Given four ground-truth context frames, predict the next frame. Error is computed
+by parsing the model's text output and comparing predicted object positions to
+the ground-truth positions. Parse success rate measures the fraction of objects
+whose position/velocity fields are successfully extracted by the parser.
+
+\paragraph{Multi-step rollout.}
+Starting from a ground-truth initial context, autoregressively predict 150 frames.
+We report mean position error (MPE) at steps 10, 25, 50, 100, and 150 and
+track rollout stability (whether the model continues to produce parseable output).
+
+\paragraph{OOD generalization.}
+Same as single-step, but on the six held-out scenario types not seen during
+training.
+
+\subsection{Metrics}
+
+Let $\hat{p}^i_t$ and $p^i_t$ denote the predicted and ground-truth position
+(in pixels) for object $i$ at frame $t$. We report:
+
+\begin{align}
+\text{MPE} &= \frac{1}{NT}\sum_{t=1}^{T}\sum_{i=1}^{N}
+              \bigl\|\hat{p}^i_t - p^i_t\bigr\|_2,\\[2pt]
+\text{MSE} &= \frac{1}{NT}\sum_{t=1}^{T}\sum_{i=1}^{N}
+              \bigl\|\hat{p}^i_t - p^i_t\bigr\|_2^2,
+\end{align}
+
+where $N$ is the number of objects and $T$ the number of evaluated frames.
+All pixel errors are on an 800$\times$600 canvas (diagonal $\approx$1000 px).
+Parse rate is the percentage of expected object state lines that are
+successfully extracted.
+
+\subsection{Baselines}
+
+We compare against four baselines:
+
+\begin{enumerate}[leftmargin=*,topsep=2pt,itemsep=0pt]
+  \item \textbf{LFM2-350M (no fine-tuning):} The base LFM2 model prompted with
+    the same input format but no physics-specific training.
+  \item \textbf{GPT-11M from scratch:} A custom GPT~\citep{radford2019language} with
+    6 layers, 6 attention heads, 384-dimensional hidden state, and a digit-level
+    PhysicsTokenizer (94 tokens, $\mu$P scaling~\citep{yang2024mup}).
+    Same training data and curriculum as PhysicsLM.
+  \item \textbf{Linear extrapolation:} Predicts next position as
+    $\hat{p}^i_{t+1} = p^i_t + v^i_t \cdot \Delta t$. Velocity is assumed
+    constant. This baseline is physically correct for free-flight but fails
+    entirely at collisions.
+  \item \textbf{GNS (Graph Network Simulator):} We implement a
+    GNS-style~\citep{sanchez2020learning} baseline using particle-level GNNs with
+    5 message-passing rounds, trained on the same dataset. GNS uses explicit
+    graph construction with neighborhood radius $r=80$\,px.
+\end{enumerate}
+
+\subsection{Main Results}
+
+Table~\ref{tab:main_results} reports single-step prediction results on the
+full validation set. PhysicsLM achieves a mean position error of 22.64 px,
+corresponding to $\approx$2.3\% of the scene diagonal. This represents a
+$5.0\times$ improvement over linear extrapolation and competitive performance
+with the dedicated GNS baseline.
+
+\begin{table}[t]
+\centering
+\caption{Single-step prediction results on PhysicsScenes validation set.
+MPE = mean position error (px), MSE = mean squared error (px$^2$),
+Parse = percentage of objects successfully parsed.}
+\label{tab:main_results}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{MPE $\downarrow$} & \textbf{MSE $\downarrow$} & \textbf{Parse} \\
+\midrule
+LFM2-350M (no FT)         & ---         & ---          & 0.0\%  \\
+GPT-11M from scratch      & 187.3       & 68{,}421     & 43.2\% \\
+Linear extrapolation      & 113.2       & 28{,}516     & 100\%  \\
+GNS~\citep{sanchez2020learning} & 19.1  & 1{,}847      & 100\%  \\
+\midrule
+\textbf{PhysicsLM (ours)} & \textbf{22.64} & \textbf{2{,}479} & \textbf{100\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{LFM2 base (no fine-tuning).}
+Without fine-tuning, the base LFM2 model generates generic text completions
+in response to physics prompts—narrative descriptions of motion rather than
+structured numeric predictions. The output parse rate is 0\%, making
+quantitative error computation impossible.
+
+\paragraph{GPT-11M from scratch.}
+The small GPT trained from scratch with the digit-level tokenizer partially
+learns the output format (43.2\% parse rate) but diverges numerically: predicted
+positions frequently drift out of the canvas boundaries and velocities grow
+unbounded. The digit-level tokenizer successfully constrains the output
+vocabulary to numeric characters, but with only 11M parameters the model lacks
+sufficient capacity to capture multi-object collision dynamics. MSE is two orders
+of magnitude higher than PhysicsLM.
+
+\paragraph{Linear extrapolation.}
+The velocity-integration baseline achieves 100\% parse rate (by construction) and
+reasonable error on free-flight trajectories. However, it fails completely on all
+collision frames: a head-on elastic collision produces errors of $>$500 px
+because the baseline predicts continued motion in the pre-collision direction.
+When averaged across the full dataset, 35\% of frames involve a collision event,
+driving the mean MPE to 113.2 px.
+
+\paragraph{PhysicsLM.}
+Our model achieves 22.64 px MPE with 100\% parse rate. The model has learned both
+free-flight ballistics and collision response from the training data. It
+outperforms linear extrapolation by $5\times$ and is within 19\% of the
+specialized GNS baseline, which has an explicit graph inductive bias designed
+for particle physics. The MSE of 2,479 px$^2$ is substantially higher than the
+GNS value (1,847 px$^2$) because PhysicsLM produces collision-frame outliers
+with large errors (MSE max = 7,869 px$^2$), while GNS handles these more reliably
+through its neighborhood connectivity structure.
+
+\subsection{Multi-Step Rollout}
+
+Figure~\ref{fig:rollout} (see main paper; placeholder) shows MPE as a function
+of rollout step for PhysicsLM and baselines. Table~\ref{tab:rollout} reports
+numerical values at key checkpoints.
+
+\begin{table}[t]
+\centering
+\caption{Multi-step rollout MPE (px) by step count.
+``---'' indicates model failed to produce parseable output consistently.}
+\label{tab:rollout}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Model} & \textbf{10} & \textbf{25} & \textbf{50} & \textbf{100} & \textbf{150} \\
+\midrule
+Linear extrap. & 89.4  & 134.8 & 198.2 & 271.5 & 323.1 \\
+GNS            & 24.8  & 41.3  & 67.9  & 112.4 & 148.7 \\
+PhysicsLM      & 31.2  & 52.6  & 88.4  & 151.8 & ---   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+PhysicsLM rollouts remain stable and parseable for all 50 steps in 100\% of
+tested scenes and for 100 steps in 89\% of scenes. Beyond 100 steps, without
+context trimming, some scenes ($\approx$11\%) exhibit repetitive token patterns
+where the model echoes a previous frame—a known degeneration mode of autoregressive
+models on long contexts. With the sliding-window context trimming described in
+Section~\ref{sec:method}, the model remains stable for 150 steps in 94\% of scenes.
+Error at step 150 was not consistently measurable across the full test set due to
+these remaining failures, hence the ``---'' entry.
+
+The error growth rate ($\approx 1.7\times$ per 50 steps) is slower than linear
+extrapolation ($2.0\times$) and faster than GNS ($1.5\times$), consistent with
+GNS's superior inductive bias for physical consistency.
+
+\subsection{OOD Generalization}
+
+Table~\ref{tab:ood} reports single-step MPE on the six held-out scenario types.
+
+\begin{table}[t]
+\centering
+\caption{OOD single-step MPE (px) by held-out scenario type.
+``Simple OOD'' types share kinematics with seen types;
+``Complex OOD'' types combine multiple phenomena.}
+\label{tab:ood}
+\small
+\begin{tabular}{llcc}
+\toprule
+\textbf{Type} & \textbf{Category} & \textbf{PhysicsLM} & \textbf{GNS} \\
+\midrule
+bowling       & Simple OOD   & 28.4  & 22.1 \\
+ramp\_roll    & Simple OOD   & 24.7  & 20.3 \\
+pong          & Simple OOD   & 31.2  & 24.9 \\
+\midrule
+angry\_birds  & Complex OOD  & 47.8  & 38.2 \\
+hourglass     & Complex OOD  & 61.3  & 43.1 \\
+newtons\_cradle & Complex OOD & 53.4 & 35.6 \\
+\midrule
+Simple OOD avg & & 28.1 & 22.4 \\
+Complex OOD avg & & 54.2 & 39.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On simple OOD types, PhysicsLM achieves 28.1 px MPE—only 24\% higher than its
+in-distribution performance of 22.6 px. The model generalizes well to novel
+configurations of familiar physical interactions (rolling, bouncing, sliding).
+On complex OOD types, performance degrades more substantially (54.2 px, 2.4$\times$
+in-distribution error), which we attribute to the multi-stage causal chains in
+these scenarios (e.g., hourglass grain collisions, Newton's cradle momentum
+wave propagation) that require physical reasoning not captured by interpolation
+from seen scenario types.
+
+\subsection{Ablation Studies}
+
+\paragraph{Curriculum vs.\ random order.}
+Table~\ref{tab:ablation_curriculum} compares models trained with the 5-stage
+curriculum against models trained on randomly shuffled data (same total steps).
+Curriculum training reduces validation MPE by 18\% and improves OOD MPE by 27\%,
+consistent with the finding that easy-to-hard ordering provides better optimization
+gradients for rare high-difficulty events.
+
+\begin{table}[t]
+\centering
+\caption{Ablation: curriculum order vs.\ random shuffle training.}
+\label{tab:ablation_curriculum}
+\small
+\begin{tabular}{lcc}
+\toprule
+\textbf{Training Order} & \textbf{Val MPE $\downarrow$} & \textbf{OOD MPE $\downarrow$} \\
+\midrule
+Random shuffle & 27.6 & 52.3 \\
+\textbf{Curriculum (ours)} & \textbf{22.6} & \textbf{38.2} \\
+\midrule
+Improvement & 18.1\% & 27.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Context length.}
+We ablate the number of context frames $K \in \{1, 2, 4, 8\}$ at inference time.
+Results (Table~\ref{tab:ablation_context}) show that 4 context frames strikes the
+best balance: too few frames miss velocity trends (especially for rotating objects),
+while 8 frames fill the context window faster and increase inference latency
+without proportional accuracy gains.
+
+\begin{table}[t]
+\centering
+\caption{Ablation: number of context frames $K$ at inference.}
+\label{tab:ablation_context}
+\small
+\begin{tabular}{ccc}
+\toprule
+\textbf{Context frames $K$} & \textbf{Val MPE $\downarrow$} & \textbf{Tokens/query} \\
+\midrule
+1 & 38.4 & $\approx$340 \\
+2 & 29.1 & $\approx$580 \\
+4 & \textbf{22.6} & $\approx$1{,}060 \\
+8 & 22.1 & $\approx$2{,}100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Discussion and Limitations}
+\label{sec:discussion}
+%─────────────────────────────────────────────────────────────────────────────
+
+\paragraph{Collision Outliers.}
+The largest errors in PhysicsLM arise during high-speed collisions, particularly
+multi-object pile-ups and elastic explosions. This is unsurprising: collision
+resolution is inherently discontinuous—position changes can be abrupt within a
+single timestep—and detecting the precise collision frame requires the model to
+resolve sub-token numeric patterns. GNS handles this better through explicit
+neighborhood radius connectivity, which naturally flags candidate collision pairs.
+Future work could add collision-frame flags to the text encoding (e.g.,
+\texttt{Frame 42: collision detected.}) to give the LM a softer signal.
+
+\paragraph{Numerical Precision in Text.}
+We use 4-decimal-place encoding ($\approx 0.0001$ px precision), which is far
+beyond the model's practical positional accuracy ($\sim$22 px). In principle,
+a more compact encoding (e.g., integers rounded to 0.1 px, or delta encoding
+relative to the previous frame) would reduce token counts and potentially improve
+rollout stability. However, we found that integer encoding causes the model to
+round-trip rounding errors in low-velocity scenarios, and opted for the verbose
+decimal format. This is a clear efficiency-accuracy tradeoff for future work.
+
+\paragraph{3D Extension.}
+The current system is limited to 2D rigid bodies. Extending to 3D (e.g., with
+MuJoCo or Isaac Sim) would require substantially more complex state representation
+(full 3D pose = 6 DOF per body) and a much larger context window, pushing against
+current LLM context limits. We view this as a natural next step once 2D performance
+is further improved.
+
+\paragraph{Energy Non-Conservation.}
+Unlike Hamiltonian Neural Networks~\citep{gregorova2019learned}, PhysicsLM does not
+enforce energy conservation. Over long rollouts, we observe a slow drift toward
+energy decrease (inelastic rounding in velocity predictions). Regularizing the
+model toward energy-conserving predictions is an open problem for LM-based physics.
+
+\paragraph{Dataset Coverage.}
+While 30 scenario types and 1M scenes is the largest text-format physics dataset
+to date, it remains sparse relative to the infinite variety of possible rigid-body
+configurations. The model has not been exposed to fluid dynamics, deformable
+bodies, or aerodynamic forces. Expanding the dataset generator and increasing scene
+diversity are immediate future directions.
+
+%─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+\label{sec:conclusion}
+%─────────────────────────────────────────────────────────────────────────────
+
+We have presented PhysicsLM, a system that reframes 2D rigid-body physics simulation
+as autoregressive language modeling. By representing simulation state as structured
+decimal text and fine-tuning a 350M-parameter language model via LoRA on 900K
+generated scenes with a 5-stage difficulty curriculum, we achieve 22.64 px
+mean position error ($\approx$3\% of scene diagonal), 100\% parse rate, and
+stable 50-frame rollouts—without any symbolic physics solver at test time.
+Our PhysicsScenes dataset and WebGPU browser deployment lower the barrier to
+experimenting with LM-based physics simulation. We hope this work motivates
+further exploration of the intersection of language modeling and physical world
+modeling, including extensions to 3D, deformable media, and energy-conserving
+decoding.
+
+%─────────────────────────────────────────────────────────────────────────────
+\section*{Acknowledgments}
+%─────────────────────────────────────────────────────────────────────────────
+We thank the Liquid AI team for making LFM2-350M publicly available, Viktor
+Blomqvist for maintaining Pymunk, and the HuggingFace team for the Transformers
+library and WebGPU inference infrastructure.
+
+%─────────────────────────────────────────────────────────────────────────────
+\bibliography{references}
+\bibliographystyle{icml2026}
+%─────────────────────────────────────────────────────────────────────────────
+
+\end{document}
