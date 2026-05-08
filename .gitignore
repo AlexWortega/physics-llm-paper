@@ -17,8 +17,8 @@
 *-blx.bib
 *.bcf
 
-# Output
-*.pdf
+# Output (keep main.pdf tracked)
+# *.pdf
 
 # OS
 .DS_Store
