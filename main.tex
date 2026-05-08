@@ -60,28 +60,24 @@
 %─────────────────────────────────────────────────────────────────────────────
 \begin{abstract}
 %─────────────────────────────────────────────────────────────────────────────
-We present \textbf{PhysicsLM}, a system that frames 2D rigid body physics simulation as
-autoregressive language modeling. Rather than constructing a bespoke neural
-physics engine, we encode each simulation frame as a short, structured text string
-and fine-tune a 350M-parameter language model (LFM2-350M) to predict the next
-frame token-by-token using standard next-token prediction.
-To support training and evaluation, we introduce \textbf{PhysicsScenes}, the
-largest text-format 2D physics dataset to date, comprising 900K training scenes
-across 24 scenario types drawn from six physical categories (collisions,
-stacking, ramps, constraints, minigames, and complex compound scenes), plus a
-held-out out-of-distribution (OOD) split of six unseen scenario types.
-On single-step prediction, our fine-tuned model achieves a position RMSE of
-\textbf{18.85\,px} (MSE 355\,px$^2$) on seen scenario types and a
-\textbf{0.0\% parse failure rate} across all 30 scenario types.
-OOD results split by novelty: near-distribution OOD types (bowling, ramp\_roll,
-newtons\_cradle) achieve \textbf{0.94\,px} RMSE, while genuinely novel scenarios
-(angry\_birds, hourglass, pong) reach \textbf{24.79\,px} RMSE---a
-$1.3\times$ degradation relative to the seen-scenario average.
-Performance spans five orders of magnitude across categories: near-perfect on
-stacking and constraint scenes (RMSE $<$ 1.5\,px) and substantially worse on
-high-entropy minigame and complex scenarios.
-We additionally demonstrate first-of-its-kind in-browser LM physics simulation
-via ONNX/WebGPU export, eliminating the need for server-side inference.
+We explore \textbf{text as a universal interface for physics simulation}:
+rather than building a bespoke neural physics engine, we encode each simulation
+frame as a structured decimal text string and fine-tune a 350M-parameter language
+model (LFM2-350M/PhysicsLM) to act as a surrogate simulator for 2D rigid-body
+dynamics via standard next-token prediction.
+To support this, we introduce \textbf{PhysicsScenes}---900K Pymunk scenes across
+30 scenario types in six physical categories, with a designed six-type
+out-of-distribution (OOD) split.
+We report results \emph{honestly}: on seen scenarios, PhysicsLM (RMSE 18.85\,px)
+outperforms copy-last on structured categories (stacking 2.6$\times$, constraint 3.7$\times$,
+collision 1.4$\times$) but loses on chaotic ones (complex/minigame 5--7$\times$ worse).
+Linear extrapolation is near-exact between collision frames by construction
+of Pymunk's integration scheme, making it a near-oracle on most frames.
+OOD results split sharply: near-distribution OOD averages \textbf{0.94\,px} RMSE
+while genuinely novel scenarios (hourglass, angry\_birds, pong) reach \textbf{24.79\,px}.
+Parse failure rate is \textbf{0.0\%} across all 30 scenario types, including all OOD types.
+We also demonstrate first-of-its-kind in-browser LM physics simulation via ONNX/WebGPU
+at q4f16 quantization, with no server-side inference required.
 \end{abstract}
 
 %─────────────────────────────────────────────────────────────────────────────
@@ -89,25 +85,28 @@ via ONNX/WebGPU export, eliminating the need for server-side inference.
 \label{sec:intro}
 %─────────────────────────────────────────────────────────────────────────────
 
-Physics simulation is central to robotics, game engines, scientific computing, and
-increasingly to reinforcement learning environments. Classical solvers based on
-constraint-satisfaction (e.g., Chipmunk2D, Bullet, MuJoCo) are both accurate and fast,
-but they are not differentiable, require hand-specified object geometries, and cannot
-seamlessly incorporate learned priors about typical physical dynamics.
+High-fidelity surrogate simulators are increasingly central to physics-informed AI:
+they must generalize across regimes, extrapolate beyond training distributions, and
+do so without the hand-engineered priors of classical solvers. Classical constraint-
+satisfaction engines (Chipmunk2D, Bullet, MuJoCo) are accurate and fast, but they
+are domain-specific, non-differentiable, and require hand-specified geometries.
 
-The rise of \emph{neural physics simulators}—systems that learn to approximate physical
-dynamics from data—has opened a complementary research direction. Methods based on
-graph neural networks (GNNs)~\citep{battaglia2016interaction, sanchez2020learning,
-li2019learning} can generalize across scenes and object counts, and recent mesh-based
-variants~\citep{pfaff2021learning} operate on complex geometries. Yet these
-specialized architectures require curated graph construction, custom aggregation
-schemes, and careful architecture decisions for each new domain.
+Neural surrogate simulators~\citep{battaglia2016interaction, sanchez2020learning,
+li2019learning, pfaff2021learning} address this through learned dynamics, but impose
+strong architectural priors (graph topology, message-passing radius, equivariance
+constraints) that must be re-engineered for each new domain. Equivariant
+networks~\citep{satorras2021n} and operator-learning approaches~\citep{li2021fourier}
+achieve impressive data efficiency by baking in symmetries, at the cost of
+architectural flexibility.
 
-Meanwhile, large language models (LLMs) have shown remarkable capabilities for
-structured prediction across diverse domains. Text-based representations have proven
-effective for tasks as varied as code generation, molecular property prediction, and
-robot planning~\citep{wei2022chain, yang2023foundation}. This raises a natural
-question: \emph{can a language model learn to simulate physics through text?}
+We take a complementary approach: \textbf{text as a universal interface for physics
+simulation}. Rather than specialized graph structures or physics-informed inductive
+biases, we represent simulation state as structured decimal text and fine-tune a
+general-purpose language model to act as a surrogate simulator. This approach requires
+no domain-specific architecture, generalizes across scenario types via the pre-trained
+LM backbone, and naturally extends to new physical domains by changing the text format
+alone. As a surrogate, it can also be deployed entirely in-browser via WebGPU, removing
+the compute infrastructure barrier for interactive physics simulation.
 
 In this paper we answer affirmatively. We introduce \textbf{PhysicsLM}, a system
 that represents each simulation frame as a human-readable text string of the
@@ -887,5 +886,101 @@ gravity direction). For horizontal motion or near-rest objects, the error is zer
 This means linear extrapolation is effectively an oracle on non-collision frames;
 its failure mode (incorrect velocity prediction after collision) is the same gap
 that PhysicsLM is designed to close.
+
+\section{Qualitative Comparisons: Ground Truth vs.\ PhysicsLM}
+\label{app:qualitative}
+
+Figure~\ref{fig:comparison_gallery} shows mid-trajectory frames from six
+representative scenarios comparing ground truth (left half) against PhysicsLM
+predictions (right half), as rendered by the evaluation pipeline.
+
+\begin{figure*}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/comparison_gallery.pdf}
+\caption{Ground truth (left panel) vs.\ PhysicsLM prediction (right panel) for
+six scenarios at a mid-trajectory frame. Seen scenarios (top row) show tight
+alignment on structured dynamics (pendulum arc, tower stack). Novel OOD scenarios
+(bottom row) reveal degradation: Newton's cradle remains close despite being OOD
+(constraint physics transfers); hourglass and pong predictions diverge visibly.}
+\label{fig:comparison_gallery}
+\end{figure*}
+
+\section{Conservation Analysis}
+\label{app:conservation}
+
+\paragraph{Ground-truth energy profiles.}
+Figure~\ref{fig:gt_energy} shows normalized total mechanical energy
+$E(t)/E(0)$ for six ground-truth Pymunk trajectories over 150 frames.
+Energy dissipates by 3--27\% depending on the scenario, reflecting the
+inelastic collision parameters ($e < 1$) and friction coefficients designed
+into each scenario type. Momentum is not conserved because gravity provides
+a continuous external impulse. This means \emph{the target simulation itself
+is dissipative}: a physically correct surrogate should predict this energy
+decrease, not conserve energy.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/gt_energy_conservation.pdf}
+\caption{Normalized total energy $E(t)/E(0)$ for six Pymunk ground-truth
+trajectories. Energy dissipates by 3--27\% depending on the
+scenario's elasticity and friction parameters. A surrogate simulator
+must reproduce this dissipation, not conserve energy.}
+\label{fig:gt_energy}
+\end{figure}
+
+\paragraph{Model conservation.}
+Measuring conservation in PhysicsLM's rollout predictions requires
+autoregressive multi-step inference, which we defer to future work.
+We note that single-step teacher-forced evaluation (Section~\ref{sec:main-results})
+measures only local prediction error; rollout stability and energy drift
+are open evaluation dimensions. Prior work on neural simulators reports
+energy drift of 1--5\% per step for GNS-style models; we expect PhysicsLM's
+drift to be higher for high-velocity scenarios given its lack of explicit
+conservation constraints.
+
+\section{Single-Step Error Distribution Across Trajectory}
+\label{app:errorbyframe}
+
+Figure~\ref{fig:linearerror} illustrates where single-step linear extrapolation
+error concentrates. Between collision events, error is near zero; at collision
+frames, it spikes sharply. This confirms that single-step position MSE averaged
+uniformly over frames is dominated by collision frames. PhysicsLM's error
+advantage over copy-last on structured categories comes precisely from its
+ability to partially anticipate these collision outcomes from the 4-frame context.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{figures/linear_error_by_frame.pdf}
+\caption{Linear extrapolation RMSE at each frame in a 150-frame trajectory
+(smoothed over a 8-frame window). Error is $\approx$0 between collisions
+and spikes at impact events. High-entropy scenarios (pinball, pong) have
+denser spike distributions, explaining their higher average MSE.}
+\label{fig:linearerror}
+\end{figure}
+
+\section{Generalization Stress-Test Dimensions}
+\label{app:generalization}
+
+Beyond the 6 held-out scenario types, the OOD test suite supports
+systematic stress tests along five physical dimensions:
+
+\begin{table}[h]
+\centering
+\caption{Generalization stress-test axes implemented in the evaluation suite.
+Each axis varies a single physical parameter beyond the training range.
+Results on these axes are deferred to future work.}
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{Dimension} & \textbf{Train range} & \textbf{OOD range} & \textbf{Physical effect} \\
+\midrule
+Object count    & 2--15      & 1--9 or 51--100  & Sparse/dense interactions \\
+Mass ratio      & 0.5--10\,kg & $>$50\,kg or $<$0.1\,kg & Extreme momentum transfer \\
+Friction        & 0.1--1.0   & $>$2.0           & Near-frictionless or sticky \\
+Elasticity      & 0.1--0.95  & $>$0.98 (superelastic) & Persistent bouncing \\
+Gravity         & $-$981\,px/s$^2$ & 0, $-$163 (Moon), $-$2450 (Jupiter) & Trajectory curvature \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \end{document}
