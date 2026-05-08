@@ -71,11 +71,15 @@ across 24 scenario types drawn from six physical categories (collisions,
 stacking, ramps, constraints, minigames, and complex compound scenes), plus a
 held-out out-of-distribution (OOD) split of six unseen scenario types.
 On single-step prediction, our fine-tuned model achieves a position RMSE of
-\textbf{18.85\,px} (MSE 355\,px$^2$) on seen scenario types and
-\textbf{17.58\,px} on held-out OOD types, with a \textbf{0.0\% parse failure
-rate} across all 30 scenario types. Performance spans five orders of magnitude
-across categories: near-perfect on stacking and constraint scenes (RMSE $<$ 1.5\,px)
-and more challenging on high-entropy minigame and complex scenarios.
+\textbf{18.85\,px} (MSE 355\,px$^2$) on seen scenario types and a
+\textbf{0.0\% parse failure rate} across all 30 scenario types.
+OOD results split by novelty: near-distribution OOD types (bowling, ramp\_roll,
+newtons\_cradle) achieve \textbf{0.94\,px} RMSE, while genuinely novel scenarios
+(angry\_birds, hourglass, pong) reach \textbf{24.79\,px} RMSE---a
+$1.3\times$ degradation relative to the seen-scenario average.
+Performance spans five orders of magnitude across categories: near-perfect on
+stacking and constraint scenes (RMSE $<$ 1.5\,px) and substantially worse on
+high-entropy minigame and complex scenarios.
 We additionally demonstrate first-of-its-kind in-browser LM physics simulation
 via ONNX/WebGPU export, eliminating the need for server-side inference.
 \end{abstract}
@@ -135,8 +139,9 @@ Our contributions are:
     position/velocity/angle suffices for a pre-trained LM to learn physically plausible
     dynamics, eliminating the need for bespoke tokenizers or graph structures.
   \item \textbf{Curriculum training}: We assign difficulty levels 1--5 to scenarios
-    based on object count and physical complexity, and show that difficulty-ordered
-    curriculum training improves convergence and OOD generalization.
+    based on object count and physical complexity and employ difficulty-ordered
+    curriculum training throughout; formal ablation against uniform sampling is
+    deferred to future work.
   \item \textbf{WebGPU browser deployment}: We export the fine-tuned model to ONNX
     with q4f16 quantization and run it in-browser via WebGPU, achieving the first
     in-browser LM physics simulator without server-side inference.
@@ -442,9 +447,9 @@ requirements.
 
 \subsection{Evaluation Protocol}
 
-We evaluate all models on the PhysicsScenes validation split (100,020 scenes,
+We evaluate PhysicsLM on the PhysicsScenes validation split (100,020 scenes,
 30 scenario types). The OOD subset (6 held-out types, 20,004 scenes) is reported
-separately. We assess three complementary aspects:
+separately. We assess two complementary aspects:
 
 \paragraph{Single-step prediction.}
 Given four ground-truth context frames, predict the next frame. Error is computed
@@ -452,52 +457,50 @@ by parsing the model's text output and comparing predicted object positions to
 the ground-truth positions. Parse success rate measures the fraction of objects
 whose position/velocity fields are successfully extracted by the parser.
 
-\paragraph{Multi-step rollout.}
-Starting from a ground-truth initial context, autoregressively predict 150 frames.
-We report mean position error (MPE) at steps 10, 25, 50, 100, and 150 and
-track rollout stability (whether the model continues to produce parseable output).
-
 \paragraph{OOD generalization.}
 Same as single-step, but on the six held-out scenario types not seen during
-training.
+training. We further divide OOD scenarios into \emph{near-distribution OOD}
+(types sharing physical primitives with seen scenarios) and \emph{novel OOD}
+(types requiring qualitatively new interaction patterns), as they exhibit very
+different error profiles.
 
 \subsection{Metrics}
 
-Let $\hat{p}^i_t$ and $p^i_t$ denote the predicted and ground-truth position
-(in pixels) for object $i$ at frame $t$. We report:
+Let $\hat{p}^i$ and $p^i$ denote the predicted and ground-truth position
+(in pixels) for object $i$. For single-step evaluation (one predicted frame per
+scene, $N$ objects) we report:
 
-\begin{align}
-\text{MPE} &= \frac{1}{NT}\sum_{t=1}^{T}\sum_{i=1}^{N}
-              \bigl\|\hat{p}^i_t - p^i_t\bigr\|_2,\\[2pt]
-\text{MSE} &= \frac{1}{NT}\sum_{t=1}^{T}\sum_{i=1}^{N}
-              \bigl\|\hat{p}^i_t - p^i_t\bigr\|_2^2,
-\end{align}
+\begin{equation}
+\text{MSE} = \frac{1}{N}\sum_{i=1}^{N}\bigl\|\hat{p}^i - p^i\bigr\|_2^2,
+\qquad \text{RMSE} = \sqrt{\text{MSE}}.
+\end{equation}
 
-where $N$ is the number of objects and $T$ the number of evaluated frames.
 All pixel errors are on an 800$\times$600 canvas (diagonal $\approx$1000 px).
-Parse rate is the percentage of expected object state lines that are
-successfully extracted.
+Parse rate is the percentage of expected object state lines successfully
+extracted from the model's text output.
 
-\subsection{Baselines}
+\subsection{Points of Comparison}
 
-We compare against four baselines:
+We report two reference points alongside PhysicsLM:
 
 \begin{enumerate}[leftmargin=*,topsep=2pt,itemsep=0pt]
   \item \textbf{LFM2-350M (no fine-tuning):} The base LFM2 model prompted with
-    the same input format but no physics-specific training.
-  \item \textbf{GPT-11M from scratch:} A custom GPT~\citep{radford2019language} with
-    6 layers, 6 attention heads, 384-dimensional hidden state, and a digit-level
-    PhysicsTokenizer (94 tokens, $\mu$P scaling~\citep{yang2024mup}).
-    Same training data and curriculum as PhysicsLM.
+    the same input format but no physics-specific training. This measures how much
+    the pre-trained backbone contributes without any domain adaptation.
   \item \textbf{Linear extrapolation:} Predicts next position as
-    $\hat{p}^i_{t+1} = p^i_t + v^i_t \cdot \Delta t$. Velocity is assumed
-    constant. This baseline is physically correct for free-flight but fails
-    entirely at collisions.
-  \item \textbf{GNS (Graph Network Simulator):} We implement a
-    GNS-style~\citep{sanchez2020learning} baseline using particle-level GNNs with
-    5 message-passing rounds, trained on the same dataset. GNS uses explicit
-    graph construction with neighborhood radius $r=80$\,px.
+    $\hat{p}^i_{t+1} = p^i_t + v^i_t \cdot \Delta t$, assuming constant velocity.
+    This baseline is exact for free-flight but fails at collisions or constrained
+    motion, giving a ceiling on physics-blind prediction.
 \end{enumerate}
+
+\noindent Two additional comparisons were attempted but are deferred to future work.
+\emph{GNS~\citep{sanchez2020learning}} training on the full PhysicsScenes corpus
+requires implementing particle-level graph construction and multi-GPU training;
+we leave this as a future comparison.
+\emph{GPT-11M from scratch} (6-layer, 384-hidden, digit tokenizer, $\mu$P scaling)
+was trained for only 500 steps due to resource constraints---approximately $15\times$
+less compute than PhysicsLM---and produces partially malformed output at that
+checkpoint, making quantitative comparison invalid (see Section~\ref{sec:discussion}).
 
 \subsection{Main Results}
 \label{sec:main-results}
@@ -507,16 +510,14 @@ validation set. The parse failure rate is \textbf{0.0\%} across all 30 scenario
 types, including all 6 OOD types---the fine-tuned model always produces
 well-formed structured output. In contrast, the LFM2-350M base model (without
 fine-tuning) generates narrative text instead of structured predictions and
-achieves 0\% parse rate; the GPT-11M model trained from scratch partially learns
-the output format but produces numerically divergent predictions with velocities
-growing out of bounds, rendering its MSE incomparable.
+achieves 0\% parse rate, confirming that the physics prediction capability is
+acquired through fine-tuning, not inherited from the pre-trained backbone.
 
 \begin{table}[t]
 \centering
 \caption{Single-step position MSE (px$^2$) and RMSE (px) per category on
-the full validation set (100,020 scenes). Parse fail rate is 0.0\% for all
-categories. ``Seen'' categories appear in training; OOD rows are from
-held-out scenario types.}
+the seen validation set (80,016 scenes). Parse fail rate is 0.0\% for all
+categories. OOD results are reported separately in Table~\ref{tab:ood}.}
 \label{tab:category}
 \small
 \begin{tabular}{lrrr}
@@ -531,7 +532,6 @@ Complex     &      558.80 & 23.64 & 0.844 \\
 Minigame    &    1{,}808.11 & 42.52 & 0.976 \\
 \midrule
 \textbf{Overall (seen)} & \textbf{355.23} & \textbf{18.85} & \textbf{0.660} \\
-\textbf{Overall (OOD)}  & \textbf{309.11} & \textbf{17.58} & \textbf{0.872} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -553,52 +553,59 @@ mean is 355\,px$^2$, driven by these high-chaos outliers.
 \subsection{OOD Generalization}
 
 Table~\ref{tab:ood} breaks down performance on the six held-out scenario types.
-The model generalizes remarkably well to OOD types that share physical primitives
-with seen scenarios. Notably, \texttt{newtons\_cradle} (OOD, constraint category)
-achieves MSE = 0.02\,px$^2$---\emph{better} than any seen scenario---because the
-model has learned elastic chain-collision patterns from seen constraint scenarios
-(\texttt{chain}, \texttt{pendulum}). Similarly, \texttt{bowling} and
-\texttt{ramp\_roll} fall comfortably within the seen-scenario error range.
+The results split sharply by how novel the OOD type is relative to the training
+distribution.
+
+\paragraph{Near-distribution OOD.}
+\texttt{newtons\_cradle}, \texttt{bowling}, and \texttt{ramp\_roll} all involve
+physical primitives well-represented in training (elastic chain collisions,
+ball-lane dynamics, inclined-plane rolls). These types average \textbf{0.94\,px}
+RMSE---better than the seen Collision and Ramp categories---because the model
+successfully applies patterns learned from structurally similar training scenarios.
+\texttt{newtons\_cradle} in particular achieves MSE = 0.02\,px$^2$, the best of
+any evaluated scenario, because the model has already internalized elastic
+chain-collision dynamics from seen constraint scenarios (\texttt{chain},
+\texttt{pendulum}).
+
+\paragraph{Novel OOD.}
+\texttt{angry\_birds}, \texttt{hourglass}, and \texttt{pong} require qualitatively
+new interaction patterns that have no direct analogue in the training set.
+These average \textbf{24.79\,px} RMSE---$1.3\times$ \emph{worse} than the
+seen-scenario average of 18.85\,px. \texttt{pong} (MSE = 724\,px$^2$) requires
+predicting ball reversal at paddle contact; \texttt{hourglass} (MSE = 596\,px$^2$)
+involves dense granular flow through a narrow neck with many simultaneous
+micro-collisions; \texttt{angry\_birds} (MSE = 530\,px$^2$) presents multi-stage
+destruction chains where positional error at the initial impact cascades across
+all downstream blocks.
+
+Despite these failures, the parse rate remains \textbf{100\%} even on novel OOD
+types, confirming that format generalization is robust even when physics reasoning
+degrades.
 
 \begin{table}[t]
 \centering
-\caption{OOD single-step results by held-out scenario type (real measurements).
-``Simple OOD'' types share physical primitives with seen scenarios;
-``Complex OOD'' types combine multiple unseen interaction patterns.}
+\caption{OOD single-step results by held-out scenario type.
+Near-distribution OOD types share physical primitives with seen scenarios;
+novel OOD types require qualitatively new interaction patterns absent from training.
+Parse fail rate is 0.0\% for all types.}
 \label{tab:ood}
 \small
 \begin{tabular}{llrr}
 \toprule
 \textbf{Scenario} & \textbf{Type} & \textbf{MSE $\downarrow$} & \textbf{RMSE $\downarrow$} \\
 \midrule
+\multicolumn{4}{l}{\textit{Near-distribution OOD (avg RMSE 0.94 px)}} \\
 newtons\_cradle &  Constraint OOD &     0.02 &   0.14 \\
 bowling         &  Collision OOD  &     1.51 &   1.23 \\
 ramp\_roll      &  Ramp OOD       &     2.08 &   1.44 \\
 \midrule
+\multicolumn{4}{l}{\textit{Novel OOD (avg RMSE 24.79 px, $1.3\times$ worse than seen avg)}} \\
 angry\_birds    &  Complex OOD    &   530.21 &  23.03 \\
 hourglass       &  Complex OOD    &   596.34 &  24.42 \\
 pong            &  Minigame OOD   &   724.51 &  26.92 \\
-\midrule
-Simple OOD avg  &                 &     1.20 &   0.94 \\
-Complex OOD avg &                 &   616.69 &  24.79 \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-Complex OOD failure modes are instructive. \texttt{pong} (MSE = 724\,px$^2$)
-requires predicting ball reversal at paddle contact, a pattern not present in any
-seen scenario. \texttt{hourglass} (MSE = 596\,px$^2$) involves dense granular
-flow through a narrow neck---many simultaneous micro-collisions that the model
-has not encountered. \texttt{angry\_birds} (MSE = 530\,px$^2$) presents multi-stage
-destruction chains (projectile $\to$ block stack collapse) where error at the
-initial impact cascades across all downstream blocks. Despite these failures,
-the parse rate remains 100\% even on complex OOD types, confirming that output
-format generalization is robust even when physics reasoning is not.
-
-The \emph{generalization gap} in cross-entropy loss (seen: 0.660, OOD: 0.872,
-gap = 0.212) is moderate: the model is penalized for incorrect numeric predictions
-on OOD scenarios, but the gap is smaller than the within-distribution variance
-across categories (stacking loss 0.518 vs.\ minigame loss 0.976).
 
 \subsection{Per-Scenario Breakdown}
 
