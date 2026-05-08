@@ -658,6 +658,35 @@ configurations. The model has not been exposed to fluid dynamics, deformable
 bodies, or aerodynamic forces. Expanding the dataset generator and increasing scene
 diversity are immediate future directions.
 
+\paragraph{GPT-from-Scratch Baseline (Negative Result).}
+We trained an 11M-parameter GPT-style transformer from scratch on the same
+PhysicsScenes corpus using a digit-level tokenizer and muP hyperparameter scaling.
+Training was halted after 500 gradient steps (compared to 7,815 steps for
+PhysicsLM) due to resource constraints. At this checkpoint the model produces
+syntactically partial frames with diverging coordinate values, making quantitative
+MSE comparison impossible. We report this as a \emph{negative result}: small
+transformers trained from scratch on this task require substantially more compute
+to converge than fine-tuning a pre-trained 350M-parameter language model.
+The pre-trained model's numerical and structural priors (decimal formatting,
+positional reasoning, symbol copying) appear to provide a strong inductive bias
+that dramatically reduces sample complexity for physics state modeling.
+Fully converging the scratch baseline is left to future work with dedicated compute.
+
+\paragraph{Scaling Analysis.}
+The most immediate open question is whether performance scales predictably with
+model size and data volume. Smaller pre-trained LMs ($<$100M parameters) may lack
+sufficient capacity to capture multi-body collision geometry, while LMs at the
+1B--7B scale should have stronger numerical reasoning but come with much higher
+inference cost. Based on our digit-level tokenizer analysis, each 200-frame scene
+uses $\approx$4,200 tokens; a 7B model with a 32K context window could in principle
+fit the entire rollout in one forward pass, enabling \emph{full-trajectory}
+attention rather than the sliding-window approximation used here.
+On the data side, our 900K training scenes cover 24 scenario types; extrapolating
+the category-level MSE relationship to 100$\times$ more data would require
+constructing a self-supervised curriculum, since manual difficulty labels do not
+scale. Investigating whether neural-scaling power laws~\citep{kaplan2020scaling}
+hold for physics text modeling is a promising research direction.
+
 %─────────────────────────────────────────────────────────────────────────────
 \section{Conclusion}
 \label{sec:conclusion}
