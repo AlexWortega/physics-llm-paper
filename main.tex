@@ -525,26 +525,29 @@ acquired through fine-tuning, not inherited from the pre-trained backbone.
 
 \begin{table}[t]
 \centering
-\caption{Single-step position RMSE (px) per category on seen scenarios, compared
-with copy-last baseline (computed on 30 randomly sampled scenes per type).
-Linear extrapolation achieves $\approx$0.10\,px RMSE across all categories
-(near-exact by construction; see text). Parse fail rate is 0.0\% for
-PhysicsLM; LFM2 base model achieves 0\% parse rate. OOD results: Table~\ref{tab:ood}.}
+\caption{Single-step position RMSE (px) per category on seen scenarios.
+Copy-last and linear-extrap baselines computed on 30 randomly sampled scenes per
+scenario type (see Appendix~\ref{app:baselines}).
+Linear extrapolation is near-exact between collision events by construction
+of Pymunk's semi-implicit Euler integration (see text and Appendix~\ref{app:baselines}).
+Parse fail rate is 0.0\% for PhysicsLM; LFM2 base model achieves 0\% parse rate.
+CE Loss$^\dagger$ = mean per-token cross-entropy (nats) on output frame tokens.
+OOD results: Table~\ref{tab:ood}.}
 \label{tab:category}
 \small
-\begin{tabular}{lrr@{\hspace{6pt}}r}
+\begin{tabular}{lrrr@{\hspace{4pt}}r}
 \toprule
-\textbf{Category} & \textbf{PhysicsLM} & \textbf{Copy-last} & \textbf{Loss} \\
-                  & \textbf{RMSE $\downarrow$} & \textbf{RMSE $\downarrow$} & \\
+\textbf{Category} & \textbf{PhysLM} & \textbf{Copy-} & \textbf{Linear} & \textbf{CE} \\
+                  & \textbf{RMSE$\downarrow$} & \textbf{last} & \textbf{extrap} & \textbf{Loss$^\dagger\downarrow$} \\
 \midrule
-Stacking    &  \textbf{0.46} &  1.21 & 0.518 \\
-Constraint  &  \textbf{1.01} &  3.75 & 0.572 \\
-Collision   &  \textbf{5.16} &  7.47 & 0.688 \\
-Ramp        &  \textbf{6.13} &  6.20 & 0.674 \\
-Complex     &        23.64   &  \textbf{4.30} & 0.844 \\
-Minigame    &        42.52   &  \textbf{5.77} & 0.976 \\
+Stacking    & \textbf{0.46} & 1.21 & 0.06 & 0.518 \\
+Constraint  & \textbf{1.01} & 3.75 & 0.06 & 0.572 \\
+Collision   & \textbf{5.16} & 7.47 & 0.09 & 0.688 \\
+Ramp        & \textbf{6.13} & 6.20 & 0.19 & 0.674 \\
+Complex     &       23.64   & \textbf{4.30} & 0.04 & 0.844 \\
+Minigame    &       42.52   & \textbf{5.77} & 0.09 & 0.976 \\
 \midrule
-\textbf{Overall (seen)} & 18.85 & \textbf{5.22} & 0.660 \\
+\textbf{Overall} & 18.85 & \textbf{5.22} & \textbf{0.10} & 0.660 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -560,13 +563,18 @@ dynamics of pinball (MSE = 5,910\,px$^2$), avalanche (2,194\,px$^2$), and pong
 ``stand still'' prediction. The overall mean MSE is therefore dominated by a small
 number of catastrophic outliers (median scenario MSE: 1.72\,px$^2$ vs.\ mean 355\,px$^2$).
 
-The \emph{linear extrapolation} baseline achieves $\approx$0.10\,px RMSE because
+The \emph{linear extrapolation} baseline (Table~\ref{tab:category}, rightmost RMSE column)
+achieves 0.04--0.19\,px RMSE per category---near-exact across the board---because
 Pymunk's position update is $p_{t+1} = p_t + v_{t+1}\Delta t$ (semi-implicit Euler):
-given the velocity at frame $t$, position is almost exactly predictable without any
-physics knowledge. The baseline fails only on collision frames, which represent a
-small fraction of randomly sampled frame pairs. This means single-step MSE alone
-is not a discriminating metric: even a model that perfectly learned Newtonian
-integration would achieve near-zero single-step MSE on most frames.
+given velocity $v_t$, position is predictable to within $|a|\Delta t^2 \approx 0.27$\,px
+(the gravity correction) without any physics knowledge. The baseline fails only on the
+small fraction of frames where a collision occurs. This makes single-step MSE a weak
+standalone metric: nearly the entire single-step error budget for a trained physics
+model lies in collision frames, not free-flight frames. Per-category linear RMSE
+varies mainly by scenario speed (fastest: Ramp at 0.19\,px; slowest: Complex/Constraint
+at 0.04--0.06\,px). PhysicsLM outperforms copy-last on all structured categories but
+falls short of linear extrapolation on every category---a quantification of how much
+of the difficulty is ``free'' given velocity.
 
 \subsection{OOD Generalization}
 
