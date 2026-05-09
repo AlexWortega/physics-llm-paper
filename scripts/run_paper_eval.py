@@ -19,9 +19,9 @@ CHECKPOINT = '/home/alexw/physics-llm-debug/lfm2-scenarios-merged'
 OUT_DIR = Path('/home/alexw/Projects/physics-llm-paper/eval_data')
 OUT_DIR.mkdir(exist_ok=True)
 
-ROLLOUT_STEPS = 30
-N_SCENES = 3          # scenes per scenario for rollout
-N_CONSERVATION = 5    # scenes for conservation analysis
+ROLLOUT_STEPS = 100
+N_SCENES = 5          # scenes per scenario for rollout (for std bands)
+N_CONSERVATION = 8    # scenes for conservation analysis
 DT = 1/60.0
 G  = 981.0
 
@@ -229,10 +229,15 @@ def run_rollout_eval(model):
                   f"mse[0]={step_mse[0]:.2f} mse[-1]={step_mse[-1]:.2f}")
 
         if scene_curves:
-            # average across scenes (nanmean)
             arr = np.array(scene_curves)
             mean_curve = list(np.nanmean(arr, axis=0).tolist())
-            results[scen] = {'category': cat, 'mean_mse_curve': mean_curve}
+            std_curve  = list(np.nanstd(arr, axis=0).tolist())
+            results[scen] = {
+                'category': cat,
+                'mean_mse_curve': mean_curve,
+                'std_mse_curve':  std_curve,
+                'per_scene_curves': [list(c) for c in scene_curves],
+            }
 
     path = OUT_DIR / 'rollout_mse.json'
     with open(path, 'w') as f:
@@ -244,76 +249,123 @@ def run_rollout_eval(model):
 # 2. Conservation analysis on model predictions
 # ──────────────────────────────────────────────────────────────────────────────
 
-def momentum(objs_dict, masses):
-    """Total momentum vector from predicted dict."""
-    px = py = 0.0
-    for oid, o in objs_dict.items():
-        m = masses.get(oid, 1.0)
-        px += m * o['vx']; py += m * o['vy']
-    return px, py
+V_COLLISION_THRESH = 10.0  # px/s — velocity change this large = collision frame
+
+def horiz_momentum(objs_dict, masses):
+    """Horizontal momentum Σ m_i * vx_i — gravity (vertical) does not affect this."""
+    return sum(masses.get(oid, 1.0) * o['vx'] for oid, o in objs_dict.items())
 
 def kinetic_energy(objs_dict, masses):
-    ke = 0.0
-    for oid, o in objs_dict.items():
-        m = masses.get(oid, 1.0)
-        ke += 0.5 * m * (o['vx']**2 + o['vy']**2)
-    return ke
+    return sum(0.5 * masses.get(oid, 1.0) * (o['vx']**2 + o['vy']**2)
+               for oid, o in objs_dict.items())
+
+def is_collision_frame(gt_prev, gt_cur):
+    """True if any object's velocity changed by > threshold between two GT frames."""
+    for oid in set(gt_prev) & set(gt_cur):
+        dv = math.sqrt((gt_cur[oid]['vx'] - gt_prev[oid]['vx'])**2 +
+                       (gt_cur[oid]['vy'] - gt_prev[oid]['vy'])**2)
+        if dv > V_COLLISION_THRESH:
+            return True
+    return False
 
 def run_conservation_eval(model):
-    print("\n=== Conservation analysis (zero-gravity billiards) ===")
-    all_p_drifts, all_ke_drifts = [], []
+    """
+    In-distribution conservation test on normal billiards (gravity ON).
+
+    At each autoregressive step we compare the model's predicted horizontal
+    momentum and kinetic energy to the ground-truth values at that step.
+    On free-flight frames (no collision in GT), both quantities should match
+    the GT closely — horizontal momentum changes only due to friction (small),
+    and KE changes deterministically as gravity converts PE to KE.
+
+    This separates conservation failure from OOD-gravity failure.
+    """
+    print("\n=== Conservation analysis (in-distribution: billiards with gravity) ===")
+    CON_STEPS = 50   # 50 steps = 0.83 s realtime
+    all_px_err, all_ke_err = [], []
 
     for seed in range(7100000, 7100000 + N_CONSERVATION):
         try:
             header, frames = gen_scene_states('billiards', seed,
-                                              n_frames=ROLLOUT_STEPS+4,
-                                              zero_gravity=True)
+                                              n_frames=CON_STEPS + 4,
+                                              zero_gravity=False)
         except Exception as e:
             print(f"  seed={seed} error: {e}"); continue
 
-        masses = {o['id']: o.get('material',{}).get('mass',1.0)
+        masses = {o['id']: o.get('material', {}).get('mass', 1.0)
                   for o in header['objects']}
 
         context_frames = frames[:4]
         pred_frames_text = [frame_to_text(f) for f in context_frames]
 
-        p_drifts, ke_drifts = [], []
-        # initial state from GT frame 3
-        init_dict = gt_to_dict(frames[3])
-        p0x, p0y = momentum(init_dict, masses)
-        ke0 = kinetic_energy(init_dict, masses)
+        # Normalise momentum error by the scene's initial |Σm·vx| to avoid
+        # divide-by-zero when balls happen to move in opposite directions.
+        px_initial = horiz_momentum(gt_to_dict(frames[3]), masses)
+        px_norm = max(abs(px_initial), 1.0)  # lower-bound at 1.0 px·kg/s
 
-        for t in range(ROLLOUT_STEPS):
+        px_errs, ke_errs = [], []
+
+        for t in range(CON_STEPS):
+            gt_frame = frames[4 + t]
+            gt_dict   = gt_to_dict(gt_frame)
+            gt_prev   = gt_to_dict(frames[3 + t])
+            collision  = is_collision_frame(gt_prev, gt_dict)
+
             ctx_text = ''.join(pred_frames_text[-4:])
-            prompt = header_to_text(header) + ctx_text + 'Predict next frame:\n'
-            gen = predict_next(model, prompt, max_new_tokens=220)
+            prompt   = header_to_text(header) + ctx_text + 'Predict next frame:\n'
+            gen      = predict_next(model, prompt, max_new_tokens=160)
             pred_dict = parse_frame(gen)
 
-            if pred_dict:
-                px, py = momentum(pred_dict, masses)
-                ke = kinetic_energy(pred_dict, masses)
-                p_drift = math.sqrt((px-p0x)**2 + (py-p0y)**2) / (abs(p0x)+abs(p0y)+1e-6)
-                ke_drift = abs(ke - ke0) / (ke0 + 1e-6)
-                p_drifts.append(p_drift)
-                ke_drifts.append(ke_drift)
-                gt_f = frames[4+t]
-                pred_frames_text.append('Frame ' + str(gt_f['frame']) + ': ' + gen.strip() + '\n')
+            if pred_dict and (set(pred_dict) & set(gt_dict)):
+                # Horizontal momentum: compare predicted to GT.
+                # Normalise by initial |Σm·vx| (stable; avoids near-zero denom).
+                px_pred = horiz_momentum(pred_dict, masses)
+                px_gt   = horiz_momentum(gt_dict,   masses)
+                px_err  = abs(px_pred - px_gt) / px_norm
+                px_errs.append(px_err)
+
+                # KE error on free-flight frames only (gravity effect factored out via GT)
+                if not collision:
+                    ke_pred = kinetic_energy(pred_dict, masses)
+                    ke_gt   = kinetic_energy(gt_dict,   masses)
+                    ke_err  = abs(ke_pred - ke_gt) / (ke_gt + 1e-6)
+                    ke_errs.append(ke_err)
+
+                pred_frames_text.append(
+                    'Frame ' + str(gt_frame['frame']) + ': ' + gen.strip() + '\n')
             else:
-                p_drifts.append(float('nan'))
-                ke_drifts.append(float('nan'))
-                pred_frames_text.append(frame_to_text(frames[4+t]))
+                px_errs.append(float('nan'))
+                pred_frames_text.append(frame_to_text(gt_frame))
 
-        all_p_drifts.append(p_drifts)
-        all_ke_drifts.append(ke_drifts)
-        print(f"  seed={seed}: p_drift[-1]={p_drifts[-1]:.4f} ke_drift[-1]={ke_drifts[-1]:.4f}")
+        all_px_err.append(px_errs)
+        all_ke_err.append(ke_errs)
+        print(f"  seed={seed}: px_err[-1]={px_errs[-1]:.4f}  "
+              f"ke_err(free-flight mean)={float(np.nanmean(ke_errs)):.4f}")
 
-    arr_p  = np.nanmean(np.array(all_p_drifts), axis=0).tolist()
-    arr_ke = np.nanmean(np.array(all_ke_drifts), axis=0).tolist()
-    result = {'momentum_drift_curve': arr_p, 'ke_drift_curve': arr_ke}
+    # Pad ke_errs to same length as px_errs for consistent curves
+    max_len = max(len(r) for r in all_px_err)
+    arr_px = np.nanmean(np.array([r + [float('nan')]*(max_len-len(r))
+                                   for r in all_px_err]), axis=0).tolist()
+    arr_px_std = np.nanstd(np.array([r + [float('nan')]*(max_len-len(r))
+                                      for r in all_px_err]), axis=0).tolist()
+    mean_ke_err = float(np.nanmean([v for r in all_ke_err for v in r]))
+    std_ke_err  = float(np.nanstd( [v for r in all_ke_err for v in r]))
+
+    result = {
+        'description': 'In-distribution billiards (gravity on). '
+                       'px_err: |Σm·pred_vx - Σm·gt_vx| / max(|Σm·vx_0|, 1.0). '
+                       'ke_err: |KE_pred - KE_gt| / KE_gt on free-flight frames only.',
+        'px_err_curve': arr_px,
+        'px_err_std_curve': arr_px_std,
+        'mean_ke_err_free_flight': mean_ke_err,
+        'std_ke_err_free_flight': std_ke_err,
+    }
 
     path = OUT_DIR / 'conservation.json'
     with open(path, 'w') as f:
         json.dump(result, f, indent=2)
+    print(f"\nMean px_err final step: {arr_px[-1]:.4f}")
+    print(f"Mean KE err (free-flight frames): {mean_ke_err:.4f} ± {std_ke_err:.4f}")
     print(f"Saved conservation → {path}")
     return result
 
